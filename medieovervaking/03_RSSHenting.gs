@@ -25,8 +25,17 @@ function hentRSSFeed(url) {
 
   // Steg 1: Hent selve URL-en. Nettverksfeil (feil domene, timeout, DNS-feil
   // osv.) kaster et unntak i UrlFetchApp - det fanger vi her.
+  //
+  // NB: Vi sender en vanlig nettleser-lignende User-Agent-header. Uten den
+  // sender UrlFetchApp en tydelig "robotaktig" signatur som standard, og
+  // enkelte nettsteder (observert bl.a. hos DN) svarer da med noe annet enn
+  // den faktiske RSS-feeden (f.eks. en blokkeringsside eller en
+  // omdirigering) selv om feeden er helt i orden i en vanlig nettleser.
   try {
     respons = UrlFetchApp.fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      },
       muteHttpExceptions: true,   // ikke kast unntak pa HTTP-feilkoder - vi sjekker koden selv under
       followRedirects: true,
       validateHttpsCertificates: true
