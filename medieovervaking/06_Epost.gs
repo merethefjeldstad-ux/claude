@@ -7,7 +7,30 @@
  * OVERST i e-posten vises alltid en statusoppsummering over hvor mange
  * kilder som ble hentet OK/FEILET - dette ER hovedhensikten med Fase 1,
  * sa brukeren kan se kildedekningen uten a apne regnearket.
+ *
+ * Visuell stil folger Maritime CleanTechs merkevareprofil (se
+ * maritime-cleantech-brand-referansen: navy/hvit/mint/himmelbla/perlebla
+ * fargepalett, avrundede kort, kort "kicker"-etiketter over overskrifter).
  */
+
+// ---------------------------------------------------------------------
+// Maritime CleanTech-fargepalett (hentet fra merkevareprofilen)
+// ---------------------------------------------------------------------
+var FARGE_NAVY = '#09152E';       // overskrifter
+var FARGE_BODY = '#313F54';       // brodtekst
+var FARGE_BG = '#FFFFFF';
+var FARGE_BG_SOFT = '#F3F6FA';    // kortbakgrunn / ytre bakgrunn
+var FARGE_RULE = '#DDE4EE';       // tynne skillelinjer
+var FARGE_NOTE_BG = '#FBF7EC';    // statusboks-bakgrunn
+var FARGE_NOTE_EDGE = '#E7D9A8';
+var FARGE_NOTE_INK = '#5B4E24';
+var FARGE_FEIL = '#B00020';       // feilstatus - egen semantisk farge, ikke merkevarefarge
+var FARGE_PERI_A = '#9CB8F9';     // header-gradient (perlebla)
+var FARGE_PERI_B = '#577DF6';
+var FONT_STACK = "-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+
+// Aksentfarger som gar pa rundgang per kategori (mint / himmelbla / perlebla)
+var KATEGORI_AKSENTER = ['#9CF5D3', '#BAE6F9', '#577DF6'];
 
 /**
  * Bygger HTML-innholdet i e-posten.
@@ -26,38 +49,48 @@ function byggEpostHtml(treffPerKategori, antallOk, totaltAntallKilder, antallFei
     totaltAntallTreff += treffPerKategori[kategorier[i]].length;
   }
 
-  var html = '<html><body style="font-family: Arial, sans-serif; color: #222; font-size: 14px;">';
-  html += '<h2 style="margin-bottom:4px;">Medieovervåking Maritime CleanTech (test)</h2>';
-  html += '<p style="font-size:13px; color:#555; margin-top:0;">' +
-    Utilities.formatDate(new Date(), TIDSSONE, 'EEEE d. MMMM yyyy') + '</p>';
+  var datoTekst = Utilities.formatDate(new Date(), TIDSSONE, 'EEEE d. MMMM yyyy');
 
   // --- Statusoppsummering: hovedhensikten med Fase 1 ---
-  html += '<div style="background:#f2f2f2; border-left:4px solid #666; padding:10px 14px; margin-bottom:18px;">';
-  html += '<strong>Kildestatus:</strong> ' + antallOk + ' av ' + totaltAntallKilder + ' kilder hentet OK.';
+  var statusHtml = '<div style="background:' + FARGE_NOTE_BG + '; border:1px solid ' + FARGE_NOTE_EDGE + '; ' +
+    'border-radius:12px; padding:16px 18px; margin:0 0 28px;">';
+  statusHtml += '<p style="font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; ' +
+    'color:' + FARGE_NOTE_INK + '; margin:0 0 6px;">Kildestatus</p>';
+  statusHtml += '<p style="font-size:13.5px; line-height:1.55; color:' + FARGE_NOTE_INK + '; margin:0;">' +
+    antallOk + ' av ' + totaltAntallKilder + ' kilder hentet OK.';
   if (antallFeilet > 0) {
-    html += '<br><span style="color:#b00020;">' + antallFeilet + ' kilde(r) feilet: ' +
-      feilendeKilderNavn.map(escapeHtml).join(', ') +
-      '. Se fanen "' + FANE_KJORINGSLOGG + '" i regnearket for feilmeldinger.</span>';
+    statusHtml += '<br><span style="color:' + FARGE_FEIL + '; font-weight:600;">' + antallFeilet +
+      ' kilde(r) feilet: ' + feilendeKilderNavn.map(escapeHtml).join(', ') +
+      '.</span> Se fanen &laquo;' + FANE_KJORINGSLOGG + '&raquo; i regnearket for feilmeldinger.';
   }
-  html += '</div>';
+  statusHtml += '</p></div>';
 
+  // --- Nyhetsseksjoner, gruppert pa kategori ---
+  var innholdHtml;
   if (totaltAntallTreff === 0) {
-    html += '<p>Ingen treff mot sokeordlisten i dag.</p>';
+    innholdHtml = '<div style="background:' + FARGE_BG + '; border:1px dashed ' + FARGE_RULE + '; ' +
+      'border-radius:12px; padding:16px 18px; margin:0 0 8px;">' +
+      '<p style="font-size:13.5px; line-height:1.6; color:#6B7688; margin:0;">Ingen treff mot sokeordlisten i dag.</p>' +
+      '</div>';
   } else {
+    innholdHtml = '';
     for (var k = 0; k < kategorier.length; k++) {
       var kategori = kategorier[k];
       var treffListe = treffPerKategori[kategori];
+      var aksent = KATEGORI_AKSENTER[k % KATEGORI_AKSENTER.length];
 
-      html += '<h3 style="border-bottom:1px solid #ccc; padding-bottom:4px;">' +
-        escapeHtml(kategori) + ' (' + treffListe.length + ')</h3>';
-      html += '<ul style="padding-left:18px;">';
+      innholdHtml += '<div style="margin:0 0 28px;">';
+      innholdHtml += '<h2 style="font-size:15.5px; font-weight:700; color:' + FARGE_NAVY + '; margin:0 0 14px; ' +
+        'letter-spacing:.01em;">' + escapeHtml(kategori) + ' (' + treffListe.length + ')</h2>';
 
       for (var t = 0; t < treffListe.length; t++) {
         var treff = treffListe[t];
-        html += '<li style="margin-bottom:14px;">';
-        html += '<a href="' + escapeAttributt(treff.lenke) + '" style="font-weight:bold; text-decoration:none; color:#0b5394;">' +
-          escapeHtml(treff.tittel) + '</a><br>';
-        html += '<span style="font-size:12px; color:#666;">Kilde: ' + escapeHtml(treff.kilde) + '</span><br>';
+        innholdHtml += '<div style="border-left:3px solid ' + aksent + '; background:' + FARGE_BG_SOFT + '; ' +
+          'border-radius:0 10px 10px 0; padding:16px 18px; margin:0 0 12px;">';
+        innholdHtml += '<h3 style="font-size:14.5px; font-weight:700; margin:0 0 6px; line-height:1.4;">' +
+          '<a href="' + escapeAttributt(treff.lenke) + '" style="color:' + FARGE_NAVY + '; text-decoration:none;">' +
+          escapeHtml(treff.tittel) + '</a></h3>';
+        innholdHtml += '<p style="font-size:12.5px; color:#5C6980; margin:0 0 8px;">Kilde: ' + escapeHtml(treff.kilde) + '</p>';
 
         if (treff.ingress) {
           // Fase 1: rå RSS-ingress vises direkte, ingen AI-bearbeiding.
@@ -65,22 +98,45 @@ function byggEpostHtml(treffPerKategori, antallOk, totaltAntallKilder, antallFei
           // RELEVANT JA/NEI-vurdering for Tier 2-treff) kunne vises her i
           // stedet, med fallback til nettopp denne ra ingressen dersom
           // AI-kallet feiler. Se README for planen for Fase 2.
-          html += '<span>' + escapeHtml(treff.ingress) + '</span><br>';
+          innholdHtml += '<p style="font-size:13.5px; line-height:1.62; color:' + FARGE_BODY + '; margin:0 0 8px;">' +
+            escapeHtml(treff.ingress) + '</p>';
         }
 
-        html += '<span style="font-size:12px; color:#888;">Treff pa sokeord: ' +
-          escapeHtml(treff.matchendeOrd.join(', ')) + '</span>';
-        html += '</li>';
+        innholdHtml += '<p style="font-size:12.5px; color:#8C97AC; margin:0;">Treff pa sokeord: ' +
+          escapeHtml(treff.matchendeOrd.join(', ')) + '</p>';
+        innholdHtml += '</div>';
       }
 
-      html += '</ul>';
+      innholdHtml += '</div>';
     }
   }
 
-  html += '<hr style="margin-top:24px; border:none; border-top:1px solid #ddd;">';
-  html += '<p style="font-size:11px; color:#999;">Automatisk generert av medieovervakingsskriptet ' +
-    '(Fase 1 - ingen AI-behandling er brukt, treff hentes direkte fra RSS-ingress).</p>';
-  html += '</body></html>';
+  var html = '<div style="background:' + FARGE_BG_SOFT + '; margin:0; padding:24px 0; font-family:' + FONT_STACK + ';">' +
+    '<div style="max-width:640px; margin:0 auto; background:' + FARGE_BG + '; border-radius:18px; overflow:hidden;">' +
+
+    // Header: perlebla-gradient banner
+    '<div style="background:linear-gradient(135deg, ' + FARGE_PERI_A + ' 0%, ' + FARGE_PERI_B + ' 100%); ' +
+    'padding:32px 36px 28px;">' +
+    '<p style="text-transform:uppercase; letter-spacing:.09em; font-size:11.5px; font-weight:700; ' +
+    'color:rgba(9,21,46,0.72); margin:0 0 10px;">Daglig medieovervaking</p>' +
+    '<p style="font-size:15px; font-weight:800; color:' + FARGE_NAVY + '; margin:0 0 4px; letter-spacing:.01em;">' +
+    'Maritime CleanTech</p>' +
+    '<h1 style="font-size:24px; line-height:1.25; font-weight:800; color:' + FARGE_NAVY + '; margin:0 0 6px;">' +
+    'Medieovervaking (test)</h1>' +
+    '<p style="font-size:13.5px; font-weight:500; color:rgba(9,21,46,0.75); margin:0;">' + datoTekst + '</p>' +
+    '</div>' +
+
+    // Body
+    '<div style="padding:26px 36px 6px;">' + statusHtml + innholdHtml + '</div>' +
+
+    // Footer
+    '<div style="padding:22px 36px 30px; border-top:1px solid ' + FARGE_RULE + ';">' +
+    '<p style="font-size:11px; line-height:1.6; color:#8C97AC; margin:0;">' +
+    'Automatisk generert av medieovervakingsskriptet (Fase 1 - ingen AI-behandling er brukt, ' +
+    'treff hentes direkte fra RSS-ingress).</p>' +
+    '</div>' +
+
+    '</div></div>';
 
   return html;
 }
