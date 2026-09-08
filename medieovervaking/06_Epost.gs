@@ -114,8 +114,10 @@ function byggEpostHtml(treffPerKategori, antallOk, totaltAntallKilder, antallFei
   var html = '<div style="background:' + FARGE_BG_SOFT + '; margin:0; padding:24px 0; font-family:' + FONT_STACK + ';">' +
     '<div style="max-width:640px; margin:0 auto; background:' + FARGE_BG + '; border-radius:18px; overflow:hidden;">' +
 
-    // Header: perlebla-gradient banner
-    '<div style="background:linear-gradient(135deg, ' + FARGE_PERI_A + ' 0%, ' + FARGE_PERI_B + ' 100%); ' +
+    // Header: perlebla-gradient banner. Solid fargen deklareres forst som
+    // fallback - e-postklienter som ikke forstar linear-gradient() ignorerer
+    // da kun den andre deklarasjonen og beholder den forste.
+    '<div style="background:' + FARGE_PERI_B + '; background:linear-gradient(135deg, ' + FARGE_PERI_A + ' 0%, ' + FARGE_PERI_B + ' 100%); ' +
     'padding:32px 36px 28px;">' +
     '<p style="text-transform:uppercase; letter-spacing:.09em; font-size:11.5px; font-weight:700; ' +
     'color:rgba(9,21,46,0.72); margin:0 0 10px;">Daglig medieovervaking</p>' +
