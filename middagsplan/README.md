@@ -76,14 +76,29 @@ To kilder brukes sammen, med ulike roller:
   de andre kjedene.
 
   **Dealer-IDer** (`lib/offers/dealers.ts`) er reverse-engineerede/uoffisielle,
-  verifisert under bygging mot to offentlige kilder som bruker samme API:
+  opprinnelig hentet fra to offentlige kilder som bruker samme API:
   [tilbudstrolden-mcp](https://github.com/olgasafonova/tilbudstrolden-mcp) og
   [discount-getter](https://github.com/elvios/discount-getter). Disse kan
-  slutte å stemme uten varsel. **Coop Mega mangler en verifisert dealer-ID** —
-  legg den inn i `DEALER_IDS` i `lib/offers/dealers.ts` når den er funnet
-  (kan hentes ved å kalle `GET /v2/dealers?country_id=NO` og lete etter
-  riktig kjedenavn). Sjekk `OfferFetchLog`-tabellen jevnlig (eller ved
-  mistanke om at menyen ser rar ut) for å se om en kjede har sluttet å svare.
+  slutte å stemme uten varsel.
+
+  **Live-testet 2026-09-09:** endepunktet, `dealer_ids`-parameteret og
+  Rema 1000-IDen (`faa0Ym`) er bekreftet mot det ekte APIet — se ekte
+  eksempel-respons og feltnavn i git-historikken/PR-beskrivelsen. Feltene
+  adapteren leser (`heading`, `pricing.price`/`pre_price`, `dealer`/
+  `branding.name`, `run_from`/`run_till`, `id`) stemmer med det APIet
+  faktisk returnerer.
+
+  **Coop Mega mangler fortsatt en verifisert dealer-ID.** `GET /v2/dealers`
+  filtrerer IKKE pålitelig på `country_id=NO` (bekreftet: den returnerer
+  stort sett danske kjeder uansett), og vi lette gjennom APIets fulle
+  paginering (maks 1000 treff) uten å finne "Coop Mega" i listen. Coop er
+  uansett lavest prioritert i butikkvalg-regelen, så dette er ikke
+  kritisk — men legg inn IDen i `DEALER_IDS` i `lib/offers/dealers.ts` hvis
+  den dukker opp senere (f.eks. ved å søke i responsen fra
+  `GET /v2/offers?dealer_ids=<gjettet-id>` for kjente Coop Mega-butikker).
+
+  Sjekk `OfferFetchLog`-tabellen jevnlig (eller ved mistanke om at menyen
+  ser rar ut) for å se om en kjede har sluttet å svare.
 
 ## Match mellom retter og tilbud
 
@@ -94,6 +109,14 @@ produktnavn (enkel, case-insensitiv substring-sjekk i
 Retter uten fast hovedingrediens (Pizza, Vegetarcurry) har `flexible: true`
 og et bredere, kuratert nøkkelordsett. Vil dere justere hvilke ord som
 trigger en rett, rediger `data/recipes.json` og kjør `npm run seed` på nytt.
+
+**Live-funn:** ekte Rema 1000-tilbud viste at kjøttdeig ofte selges under
+navn som "DEIG AV SVIN/STORFE" eller "KARBONADEDEIG", ikke bare "kjøttdeig".
+Nøkkelordene for alle kjøttdeig-baserte retter er derfor utvidet med
+`karbonadedeig`, `deig av svin`, `deig av storfe` og `kvernet`. Dette er
+trolig ikke det siste eksempelet på at ekte produktnavn varierer mer enn
+antatt — følg med på om menyen ser ut til å gå glipp av åpenbare tilbud, og
+utvid nøkkelordlisten etter behov.
 
 ## Kalender → tid til middag
 
