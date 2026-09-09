@@ -1,0 +1,199 @@
+// Datamodell for Middagsplan (fase 1).
+//
+// Fase 2 (automatisk aggregert handleliste fra rettenes ingredienser) er ikke
+// bygget her, men modellen er lagt til rette for det:
+// - Recipe.mainIngredients er strukturert (egen tabell, ikke fritekst), så en
+//   ingrediensliste per rett kan utvides uten migrering av datatype.
+// - Offer beholder rå kildedata (sourceRaw) slik at nye felter kan hentes ut
+//   i ettertid uten å hente på nytt.
+// - StoreSelectionConfig og ShoppingItem.recipeId/ingredientId (nullable) er
+//   klare for at handlelisten kan kobles til retter/ingredienser senere.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum TimeCategory {
+  KJAPT
+  MIDDELS
+  TIDKREVENDE
+}
+
+enum Chain {
+  REMA_1000
+  KIWI
+  MENY
+  SPAR
+  COOP_PRIX
+  COOP_MEGA
+  COOP_EXTRA
+  COOP_OBS
+  UKJENT
+}
+
+enum ChainGroup {
+  REMA
+  NORGESGRUPPEN
+  COOP
+  ANNET
+}
+
+/// De to husstandsmedlemmene. Hver logger inn med egen Google-konto for
+/// kalendertilgang (lesetilgang). Ikke bygget for flere enn to brukere.
+model User {
+  id              String   @id @default(cuid())
+  email           String   @unique
+  name            String?
+  googleAccountId String   @unique
+  /// OAuth refresh token (lesetilgang til kalender). Må stå i "Production"
+  /// status i Google Cloud Console for at denne ikke skal utløpe etter 7 dager
+  /// — se README.
+  refreshToken    String?
+  calendarId      String   @default("primary")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+/// En rett fra oppskriftslisten.
+model Recipe {
+  id              String       @id @default(cuid())
+  name            String       @unique
+  timeCategory    TimeCategory
+  note            String?
+  /// true for retter uten fast hovedingrediens (f.eks. Pizza, Vegetarcurry) —
+  /// disse bruker et bredere nøkkelordsett for tilbudsmatching, se lib/recipes.
+  flexible        Boolean      @default(false)
+  lastUsedAt      DateTime?
+  createdAt       DateTime     @default(now())
+  ingredients     RecipeIngredient[]
+  menuAssignments MenuAssignment[]
+}
+
+/// Hovedingrediens(er)/nøkkelord for en rett. Én rett kan ha flere — match er
+/// "eller" (én treff på tilbud er nok til å utløse retten), se
+/// lib/menu/match.ts.
+model RecipeIngredient {
+  id       String @id @default(cuid())
+  recipeId String
+  recipe   Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  /// Søkeord brukt mot tilbudets produktnavn (små bokstaver, substring-match).
+  keyword  String
+
+  @@index([recipeId])
+}
+
+/// Et ukens tilbud hentet fra Tjek/etilbudsavis-adapteren.
+model Offer {
+  id              String     @id @default(cuid())
+  /// Ekstern id fra kilden, for deduplisering ved re-henting.
+  externalId      String     @unique
+  chain           Chain
+  storeName       String
+  productName     String
+  description     String?
+  price           Float?
+  prePrice        Float?
+  currency        String     @default("NOK")
+  validFrom       DateTime?
+  validTo         DateTime?
+  fetchedAt       DateTime   @default(now())
+  /// Rå JSON fra kilden — bevart for robusthet mot at responsformatet endres,
+  /// og som grunnlag for fase 2 uten å måtte hente på nytt.
+  sourceRaw       String?
+  menuAssignments MenuAssignment[]
+
+  @@index([chain])
+}
+
+/// Logg over forsøk på å hente tilbud, for feilhåndtering/varsling (Tjek-APIet
+/// er uoffisielt og kan slutte å svare uten varsel).
+model OfferFetchLog {
+  id           String   @id @default(cuid())
+  startedAt    DateTime @default(now())
+  finishedAt   DateTime?
+  success      Boolean  @default(false)
+  chainsOk     String? // komma-separert liste over kjeder som ble hentet OK
+  chainsFailed String? // komma-separert liste over kjeder som feilet
+  errorMessage String?
+}
+
+/// En generert ukesmeny.
+model WeeklyMenu {
+  id          String    @id @default(cuid())
+  /// Mandag i uken (dato, uten klokkeslett).
+  weekStart   DateTime  @unique
+  generatedAt DateTime  @default(now())
+  days        MenuDay[]
+}
+
+/// Én dag i ukesmenyen, koblet til en "MenuAssignment" (rett + evt. tilbud).
+/// Assignments flyttes mellom dager ved ombalansering (22:00-jobben) —
+/// dagen i seg selv beholder bare tidsbudsjettet for den datoen.
+model MenuDay {
+  id               String       @id @default(cuid())
+  weekId           String
+  week             WeeklyMenu   @relation(fields: [weekId], references: [id], onDelete: Cascade)
+  date             DateTime
+  /// 0 = mandag … 6 = søndag
+  dayIndex         Int
+  assignmentId     String
+  assignment       MenuAssignment @relation(fields: [assignmentId], references: [id])
+  /// Beregnet tid-til-middag-kategori for kvelden, ut fra kalenderne.
+  timeCategory     TimeCategory
+  availableMinutes Int
+  wasRebalanced    Boolean      @default(false)
+
+  @@unique([weekId, dayIndex])
+}
+
+/// Rett + (evt.) tilbud som utløste den, for én ukes meny. Holdes separat fra
+/// MenuDay slik at 22:00-jobben kan bytte om hvilken dag som får hvilken
+/// assignment uten å hente inn nye retter.
+model MenuAssignment {
+  id          String    @id @default(cuid())
+  recipeId    String
+  recipe      Recipe    @relation(fields: [recipeId], references: [id])
+  offerId     String?
+  offer       Offer?    @relation(fields: [offerId], references: [id])
+  /// true = ingen tilbud utløste retten ("favoritt uten tilbud denne uken").
+  isFallback  Boolean   @default(false)
+  days        MenuDay[]
+}
+
+/// Handlelisten — enkel fritekst, delt mellom begge brukerne. recipeId er
+/// forberedt for fase 2 (automatisk utledede varer), men brukes ikke i fase 1.
+model ShoppingItem {
+  id        String   @id @default(cuid())
+  text      String
+  checked   Boolean  @default(false)
+  addedBy   String?
+  recipeId  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Terskler for å oversette kveldens ledige tid til kjapt/middels/tidkrevende.
+/// Én rad (singleton). Justeres ved å redigere raden direkte — se README.
+model TimeBudgetConfig {
+  id                Int    @id @default(1)
+  eveningStart      String @default("16:00")
+  eveningEnd        String @default("21:00")
+  /// freeMinutes < kjaptMaxMinutes  -> kjapt
+  kjaptMaxMinutes   Int    @default(30)
+  /// kjaptMaxMinutes <= freeMinutes < middelsMaxMinutes -> middels
+  /// freeMinutes >= middelsMaxMinutes -> tidkrevende
+  middelsMaxMinutes Int    @default(60)
+}
+
+/// Butikkvalg-regel (relevant fra fase 2, men datamodellen er klar nå).
+/// Rema 1000 er standard; bytt til NorgesGruppen først når differansen for
+/// hele handelen er >= trumfPriceThreshold (NOK). Coop er lavest prioritert.
+model StoreSelectionConfig {
+  id                  Int   @id @default(1)
+  trumfPriceThreshold Float @default(0)
+}
