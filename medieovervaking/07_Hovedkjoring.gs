@@ -156,7 +156,15 @@ function kjorDaglig() {
  * editoren mens du tester oppsettet. Etter kjoring: se "Utforelseslogg"
  * ("Execution log" / klokke-ikonet til venstre i editoren) for a se
  * detaljert steg-for-steg-logg av hva som skjedde.
+ *
+ * MIDLERTIDIG: kjorer forst diagnostikken i 08_Diagnostikk.gs (feilsoking
+ * av "0 treff pa alle kilder"-problemet), sa den vanlige testkjoringen som
+ * for. Nar feilen er funnet og rettet kan 08_Diagnostikk.gs og kallet under
+ * fjernes igjen - se forslag fra Claude Code etter forste diagnostikk-kjoring.
  */
 function kjorTest() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  kjorDiagnostikk(ss);
+
   kjorMedieovervaking();
 }
