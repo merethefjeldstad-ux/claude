@@ -30,6 +30,7 @@ function kjorDiagnostikk(ss) {
 
   diagnostiserSokeordInnlesing(ss);
   diagnostiserSokeordMatching(ss);
+  diagnostiserSelvrefererendeKilder(ss);
 
   Logger.log('########################################');
   Logger.log('### MIDLERTIDIG DIAGNOSTIKK - SLUTT ###');
@@ -238,4 +239,78 @@ function diagnostiserSokeordMatching(ss) {
 
   Logger.log('Oppsummering diagnostikk 2: Ga NOEN av de ' + testArtikler.length +
     ' ekte artiklene treff mot den FULLE sokeordlisten fra arket? ' + (noenTreffTotalt ? 'JA' : 'NEI - ingen treff i det hele tatt'));
+}
+
+/**
+ * Diagnostikk 3: Tester "selvrefererende" kilder - Google Alerts-kilder der
+ * kildenavnet er identisk med et sokeord (f.eks. "AIMPERES" bade som Kilde
+ * og som Sokeord). Slike varsler er den sterkeste testen vi har: Google har
+ * selv funnet artikkelen fordi den nevner nøyaktig det sokeordet, sa HVIS
+ * matchingen fungerer, bor disse SA A SI ALLTID gi treff nar de har
+ * fersk data. Tester alle slike kilder som faktisk har artikler akkurat na,
+ * uavhengig av om de allerede er logget som feilet/OK andre steder.
+ *
+ * @param {Spreadsheet} ss
+ */
+function diagnostiserSelvrefererendeKilder(ss) {
+  Logger.log('--- DIAGNOSTIKK 3: Selvrefererende Google Alerts-kilder (kildenavn = sokeord) ---');
+
+  var kilder = hentKilder(ss);
+  var sokeordListe = hentSokeord(ss);
+  var sokeordSettLower = {};
+  for (var s = 0; s < sokeordListe.length; s++) {
+    sokeordSettLower[sokeordListe[s].sokeord.toLowerCase()] = sokeordListe[s].sokeord;
+  }
+
+  var selvrefererendeKilder = [];
+  for (var k = 0; k < kilder.length; k++) {
+    var navnLower = kilder[k].navn.toLowerCase();
+    if (sokeordSettLower.hasOwnProperty(navnLower)) {
+      selvrefererendeKilder.push({ kilde: kilder[k], forventetSokeord: sokeordSettLower[navnLower] });
+    }
+  }
+
+  Logger.log('Fant ' + selvrefererendeKilder.length + ' kilde(r) med navn som er identisk med et sokeord: ' +
+    selvrefererendeKilder.map(function (r) { return r.kilde.navn; }).join(', '));
+
+  if (selvrefererendeKilder.length === 0) {
+    Logger.log('Ingen selvrefererende kilder a teste - hopper over denne diagnostikken.');
+    return;
+  }
+
+  var noenTestetMedInnhold = false;
+
+  for (var i = 0; i < selvrefererendeKilder.length; i++) {
+    var kildeInfo = selvrefererendeKilder[i];
+    var resultat = hentRSSFeed(kildeInfo.kilde.url);
+
+    if (!resultat.suksess) {
+      Logger.log('  "' + kildeInfo.kilde.navn + '": henting feilet (' + resultat.feilmelding + ') - kan ikke teste na.');
+      continue;
+    }
+    if (resultat.artikler.length === 0) {
+      Logger.log('  "' + kildeInfo.kilde.navn + '": 0 artikler i feeden akkurat na - kan ikke teste na.');
+      continue;
+    }
+
+    noenTestetMedInnhold = true;
+    Logger.log('  "' + kildeInfo.kilde.navn + '" (forventet sokeord: "' + kildeInfo.forventetSokeord + '"), ' +
+      resultat.artikler.length + ' artikkel/artikler i feeden:');
+
+    for (var a = 0; a < Math.min(3, resultat.artikler.length); a++) {
+      var artikkel = resultat.artikler[a];
+      var tekst = artikkel.tittel + ' ' + artikkel.ingress;
+      var enkelSubstringTreff = tekst.toLowerCase().indexOf(kildeInfo.forventetSokeord.toLowerCase()) !== -1;
+      var pipelineTreff = finnMatchendeSokeord(tekst, sokeordListe);
+
+      Logger.log('    Artikkel ' + (a + 1) + ' (JSON): ' + JSON.stringify(tekst));
+      Logger.log('      Inneholder teksten "' + kildeInfo.forventetSokeord + '" (enkelt indexOf)? ' + (enkelSubstringTreff ? 'JA' : 'NEI'));
+      Logger.log('      Treff via full pipeline (finnMatchendeSokeord)? ' +
+        (pipelineTreff.length > 0 ? 'JA (' + pipelineTreff.join(', ') + ')' : 'NEI'));
+    }
+  }
+
+  if (!noenTestetMedInnhold) {
+    Logger.log('Ingen av de selvrefererende kildene hadde hentbart innhold akkurat na - kunne ikke fullfore denne testen.');
+  }
 }
