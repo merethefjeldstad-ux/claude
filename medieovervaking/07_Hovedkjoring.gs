@@ -5,7 +5,8 @@
  * komplett kjoring:
  *   1. Les inn kilder, sokeord, mottakere og tidligere sendte URL-er
  *   2. Hent RSS fra hver kilde (feil i EN kilde stopper ALDRI resten)
- *   3. Filtrer artikler fra siste 24 timer mot sokeordlisten
+ *   3. Filtrer artikler fra siste TIDSVINDU_ARTIKKEL_TIMER timer (se
+ *      01_Konfigurasjon.gs - satt til 72t) mot sokeordlisten
  *   4. Dedupliser mot tidligere sendte artikler
  *   5. Bygg og send statusrapport pa e-post
  *   6. Logg resultatet per kilde i "Kjoringslogg" og oppdater "Kilder"
@@ -82,7 +83,7 @@ function kjorMedieovervaking() {
     }
 
     var friskeArtikler = resultat.artikler.filter(function (a) {
-      return erInnenSisteDogn(a.dato);
+      return erInnenTidsvindu(a.dato);
     });
 
     var treffTeller = 0;
@@ -121,8 +122,8 @@ function kjorMedieovervaking() {
     antallOk++;
     oppdaterKildeStatus(ss, kilde.radnummer, 'OK', new Date(), treffTeller);
     loggKjoring(ss, kilde.navn, 'OK', '', treffTeller);
-    Logger.log('"' + kilde.navn + '": OK - ' + friskeArtikler.length + ' artikler siste 24t, ' +
-      treffTeller + ' nye treff.');
+    Logger.log('"' + kilde.navn + '": OK - ' + friskeArtikler.length + ' artikler siste ' +
+      TIDSVINDU_ARTIKKEL_TIMER + 't, ' + treffTeller + ' nye treff.');
   }
 
   Logger.log('Bygger e-post-HTML...');

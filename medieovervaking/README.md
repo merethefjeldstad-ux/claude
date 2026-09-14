@@ -102,8 +102,8 @@ Ikke rediger disse – skriptet fyller dem ut selv.
 2. Trykk **Kjør**.
 3. Åpne **Utførelseslogg** («Execution log» – klokke-ikonet til venstre i
    editoren) for å se en detaljert logg av hva skriptet gjorde: hvilke
-   kilder som ble hentet, hvor mange artikler siste 24 timer, og hvor
-   mange treff.
+   kilder som ble hentet, hvor mange artikler siste 72 timer (justerbart via
+   `TIDSVINDU_ARTIKKEL_TIMER` i `01_Konfigurasjon.gs`), og hvor mange treff.
 4. Sjekk innboksen til mottakerne – du skal ha fått en e-post med emne
    «Medieovervåking Maritime CleanTech (test) – [dagens dato]».
 5. Sjekk fanen **Kilder**: kolonnen `Status` viser `OK` eller `FEILET`

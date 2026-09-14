@@ -243,20 +243,21 @@ function renseHtml(tekst) {
 }
 
 /**
- * Sjekker om en artikkel-dato er innenfor siste 24 timer.
+ * Sjekker om en artikkel-dato er innenfor tidsvinduet definert av
+ * TIDSVINDU_ARTIKKEL_TIMER (se 01_Konfigurasjon.gs - satt til 72 timer).
  * Godtar ogsa noen minutter i "fremtiden" for a tale mindre klokke-avvik
  * mellom kilden og Google sine servere.
  *
  * @param {Date|null} dato
  * @return {boolean}
  */
-function erInnenSisteDogn(dato) {
+function erInnenTidsvindu(dato) {
   if (!dato || isNaN(dato.getTime())) return false;
 
   var na = new Date().getTime();
   var toleranseFremtidMs = 60 * 60 * 1000; // 1 time takhoyde for klokke-avvik
-  var enDognMs = 24 * 60 * 60 * 1000;
+  var vinduMs = TIDSVINDU_ARTIKKEL_TIMER * 60 * 60 * 1000;
   var alderMs = na - dato.getTime();
 
-  return alderMs <= enDognMs && alderMs >= -toleranseFremtidMs;
+  return alderMs <= vinduMs && alderMs >= -toleranseFremtidMs;
 }

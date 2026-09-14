@@ -62,6 +62,14 @@ var TIDSSONE = 'Europe/Oslo';
 // e-posten innenfor Apps Scripts 6-minuttersgrense. Se 07_Hovedkjoring.gs.
 var TIDSGRENSE_HENTING_MS = 5 * 60 * 1000;
 
+// Hvor mange TIMER gamle en artikkel maksimalt kan vaere for a regnes som
+// "fersk" og tas med i sokeordfiltreringen. Satt til 72 timer (3 dogn) i
+// stedet for 24 - enkelte RSS-feeder oppdateres med etterslep, og siden
+// deduplisering mot "Sendte artikler" uansett hindrer at noe sendes to
+// ganger, er et bredere vindu trygt (kostnaden er kun at en artikkel evt.
+// dukker opp noen dager "senere" enn den egentlig ble publisert).
+var TIDSVINDU_ARTIKKEL_TIMER = 72;
+
 /**
  * Leser inn alle kilder fra "Kilder"-fanen.
  * Rader uten navn eller URL hoppes stille over (regnes som tomme/ubrukte rader).
