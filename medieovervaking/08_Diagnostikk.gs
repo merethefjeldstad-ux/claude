@@ -88,6 +88,29 @@ function diagnostiserSokeordInnlesing(ss) {
   var sokeordListe = hentSokeord(ss);
   Logger.log('Til sammenligning: hentSokeord() (slik den faktisk brukes i en vanlig kjoring) returnerte ' +
     sokeordListe.length + ' sokeord.');
+
+  // Ny mistanke: encoding-problemer i sokeord med norske tegn (aeoa/aeøå).
+  // Skanner ALLE sokeord for tegnmonstre som er typiske tegn pa feil
+  // tegnsett ("mojibake") - f.eks. UTF-8-tekst som er blitt tolket som
+  // Latin-1 et sted i kopier-lim-inn-kjeden.
+  var mistenkeligeTegn = ['Ã', 'Â', '�', 'â€'];
+  var mistenkeligeSokeord = [];
+  for (var m = 0; m < sokeordListe.length; m++) {
+    var s = sokeordListe[m].sokeord;
+    for (var n = 0; n < mistenkeligeTegn.length; n++) {
+      if (s.indexOf(mistenkeligeTegn[n]) !== -1) {
+        mistenkeligeSokeord.push(s);
+        break;
+      }
+    }
+  }
+  Logger.log('Sokeord med tegn som tyder pa feil tegnsett (mojibake): ' + mistenkeligeSokeord.length +
+    ' av ' + sokeordListe.length + (mistenkeligeSokeord.length > 0 ? ' -> ' + JSON.stringify(mistenkeligeSokeord) : ''));
+
+  // Full liste over ALLE sokeord som JSON, slik at ogsa usynlige tegn
+  // (ekstra mellomrom, linjeskift, andre kontrolltegn) blir synlige.
+  Logger.log('FULL liste over alle ' + sokeordListe.length + ' sokeord som faktisk brukes i matchingen (JSON, for a avslore usynlige tegn):');
+  Logger.log(JSON.stringify(sokeordListe.map(function (r) { return r.sokeord; })));
 }
 
 /**
@@ -143,20 +166,21 @@ function diagnostiserSokeordMatching(ss) {
     return;
   }
 
-  // Foretrekk en DN-kilde eksplisitt (brukeren har bekreftet at den gir
-  // ekte, ferske data) - fall tilbake til forste kilde som faktisk svarer
-  // med artikler hvis DN ikke skulle fungere akkurat na.
-  var foretrukketKilde = null;
-  for (var p = 0; p < kilder.length; p++) {
-    var navnLower = kilder[p].navn.toLowerCase();
-    var urlLower = kilder[p].url.toLowerCase();
-    if (navnLower.indexOf('dn') !== -1 || urlLower.indexOf('dn.no') !== -1) {
-      foretrukketKilde = kilder[p];
-      break;
+  // Foretrekk kilder vi VET tidligere ga reelle treff (DN, E24, Teknisk
+  // Ukeblad), i den rekkefolgen - fall tilbake til forste kilde som
+  // faktisk svarer med artikler hvis ingen av dem skulle fungere na.
+  var foretrukketNavn = ['dn', 'e24', 'teknisk ukeblad'];
+  var foretrukketKilder = [];
+  for (var q = 0; q < foretrukketNavn.length; q++) {
+    for (var p = 0; p < kilder.length; p++) {
+      var navnLower = kilder[p].navn.toLowerCase();
+      if (navnLower.indexOf(foretrukketNavn[q]) !== -1 && foretrukketKilder.indexOf(kilder[p]) === -1) {
+        foretrukketKilder.push(kilder[p]);
+      }
     }
   }
-  var restenAvKildene = kilder.filter(function (k) { return k !== foretrukketKilde; });
-  var kildeRekkefolge = foretrukketKilde ? [foretrukketKilde].concat(restenAvKildene) : kilder;
+  var restenAvKildene = kilder.filter(function (k) { return foretrukketKilder.indexOf(k) === -1; });
+  var kildeRekkefolge = foretrukketKilder.concat(restenAvKildene);
 
   var testKilde = null;
   var testArtikler = [];
@@ -184,11 +208,34 @@ function diagnostiserSokeordMatching(ss) {
     if (treff.length > 0) noenTreffTotalt = true;
 
     Logger.log('  Artikkel ' + (a + 1) + ': "' + artikkel.tittel + '"');
-    Logger.log('    Tekstlengde sokt i: ' + tekst.length + ' tegn');
+    // FULL tekst som JSON, ikke bare lengde - avslorer encoding-artefakter
+    // og skiller "ingress mangler" fra "ingress finnes, men matcher ikke".
+    Logger.log('    Full tekst sokt i (JSON): ' + JSON.stringify(tekst));
     Logger.log('    Treff mot full sokeordliste (' + sokeordListe.length + ' sokeord): ' +
       (treff.length > 0 ? treff.join(', ') : 'INGEN'));
   }
 
+  // Kontrollsjekk #2: samme ekte artikkeltekster, men mot noen handplukkede
+  // sokeord vi VET er brede nok til a treffe generelt norsk/engelsk
+  // nyhetsspråk ofte (ikke fra arket) - hvis DISSE heller ikke matcher noe
+  // som helst pa tvers av 5 artikler, er det et sterkt signal om at noe er
+  // galt i selve matchingen/teksten, ikke bare at sokeordlisten er for smal.
+  var bredeTestord = [
+    { sokeord: 'og', tier: 1, kontekstord: [] },
+    { sokeord: 'i', tier: 1, kontekstord: [] },
+    { sokeord: 'the', tier: 1, kontekstord: [] }
+  ];
+  var bredTreffFunnet = false;
+  for (var b = 0; b < testArtikler.length; b++) {
+    var breddTekst = testArtikler[b].tittel + ' ' + testArtikler[b].ingress;
+    if (finnMatchendeSokeord(breddTekst, bredeTestord).length > 0) {
+      bredTreffFunnet = true;
+      break;
+    }
+  }
+  Logger.log('Kontrollsjekk #2 (sokeordene "og"/"i"/"the" mot de samme ekte artiklene - burde nesten alltid treffe): ' +
+    (bredTreffFunnet ? 'MATCHET OK' : 'INGEN TREFF - selv "og"/"i"/"the" matcher ikke, sterkt tegn pa encoding- eller tekstproblem'));
+
   Logger.log('Oppsummering diagnostikk 2: Ga NOEN av de ' + testArtikler.length +
-    ' ekte artiklene treff mot sokeordlisten? ' + (noenTreffTotalt ? 'JA' : 'NEI - ingen treff i det hele tatt'));
+    ' ekte artiklene treff mot den FULLE sokeordlisten fra arket? ' + (noenTreffTotalt ? 'JA' : 'NEI - ingen treff i det hele tatt'));
 }
