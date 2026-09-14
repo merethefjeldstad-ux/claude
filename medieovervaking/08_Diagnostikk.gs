@@ -170,7 +170,7 @@ function diagnostiserSokeordMatching(ss) {
   // Foretrekk kilder vi VET tidligere ga reelle treff (DN, E24, Teknisk
   // Ukeblad), i den rekkefolgen - fall tilbake til forste kilde som
   // faktisk svarer med artikler hvis ingen av dem skulle fungere na.
-  var foretrukketNavn = ['dn', 'e24', 'teknisk ukeblad'];
+  var foretrukketNavn = ['energi og klima', 'dn', 'e24', 'teknisk ukeblad'];
   var foretrukketKilder = [];
   for (var q = 0; q < foretrukketNavn.length; q++) {
     for (var p = 0; p < kilder.length; p++) {
