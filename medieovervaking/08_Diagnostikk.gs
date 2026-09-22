@@ -32,6 +32,7 @@ function kjorDiagnostikk(ss) {
   diagnostiserSokeordMatching(ss);
   diagnostiserSelvrefererendeKilder(ss);
   diagnostiserTier2Kontekstsjekk(ss);
+  diagnostiserAlleTier2Kontekstord(ss);
 
   Logger.log('########################################');
   Logger.log('### MIDLERTIDIG DIAGNOSTIKK - SLUTT ###');
@@ -420,4 +421,53 @@ function diagnostiserTier2Kontekstsjekk(ss) {
       }
     }
   }
+}
+
+/**
+ * Diagnostikk 5: Full gjennomgang av kontekstord for ALLE Tier 2-sokeord,
+ * ikke bare "GASS". Flagger kontekstord som er sa korte at de lett kan
+ * matche tilfeldig inni andre ord (substring-sok uten ordgrense-sjekk) -
+ * samme mekanisme som avslorte "KI"-problemet i diagnostikk 4 (matchet
+ * inni "Kilder"). Rene datalister, ingen RSS-henting - kjapt a kjore.
+ *
+ * @param {Spreadsheet} ss
+ */
+function diagnostiserAlleTier2Kontekstord(ss) {
+  Logger.log('--- DIAGNOSTIKK 5: Full gjennomgang av Tier 2-kontekstord ---');
+
+  var sokeordListe = hentSokeord(ss);
+  var tier2Rader = sokeordListe.filter(function (r) { return r.tier === 2; });
+
+  Logger.log('Fant ' + tier2Rader.length + ' Tier 2-sokeord totalt.');
+
+  var TERSKEL_KORT_ORD = 3; // kontekstord med 3 tegn eller faerre flagges som risikable
+  var totaltAntallRisikable = 0;
+
+  for (var i = 0; i < tier2Rader.length; i++) {
+    var rad = tier2Rader[i];
+    var kontekstordVisning = rad.kontekstord.map(function (x) { return '"' + x + '"'; }).join(', ');
+
+    var risikableIDenneRaden = [];
+    for (var j = 0; j < rad.kontekstord.length; j++) {
+      if (rad.kontekstord[j].length <= TERSKEL_KORT_ORD) {
+        risikableIDenneRaden.push(rad.kontekstord[j]);
+      }
+    }
+
+    if (rad.kontekstord.length === 0) {
+      Logger.log('  "' + rad.sokeord + '": INGEN kontekstord konfigurert - dette Tier 2-ordet kan ALDRI matche.');
+    } else if (risikableIDenneRaden.length > 0) {
+      totaltAntallRisikable += risikableIDenneRaden.length;
+      Logger.log('  "' + rad.sokeord + '": [' + kontekstordVisning + ']  <-- RISIKABELT: ' +
+        risikableIDenneRaden.map(function (x) { return '"' + x + '" (' + x.length + ' tegn)'; }).join(', ') +
+        ' - korte ord kan matche tilfeldig inni andre ord');
+    } else {
+      Logger.log('  "' + rad.sokeord + '": [' + kontekstordVisning + ']');
+    }
+  }
+
+  Logger.log('Oppsummering diagnostikk 5: ' + totaltAntallRisikable +
+    ' potensielt risikable (<=' + TERSKEL_KORT_ORD + ' tegn) kontekstord funnet pa tvers av ' +
+    tier2Rader.length + ' Tier 2-sokeord. Disse bor vurderes manuelt i arket - korte ord/forkortelser ' +
+    'matcher lett tilfeldig inni andre ord siden sokingen er substring-basert uten ordgrense-sjekk.');
 }
