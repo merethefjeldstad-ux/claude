@@ -31,6 +31,7 @@ function kjorDiagnostikk(ss) {
   diagnostiserSokeordInnlesing(ss);
   diagnostiserSokeordMatching(ss);
   diagnostiserSelvrefererendeKilder(ss);
+  diagnostiserTier2Kontekstsjekk(ss);
 
   Logger.log('########################################');
   Logger.log('### MIDLERTIDIG DIAGNOSTIKK - SLUTT ###');
@@ -312,5 +313,111 @@ function diagnostiserSelvrefererendeKilder(ss) {
 
   if (!noenTestetMedInnhold) {
     Logger.log('Ingen av de selvrefererende kildene hadde hentbart innhold akkurat na - kunne ikke fullfore denne testen.');
+  }
+}
+
+/**
+ * Diagnostikk 4: Undersoker et konkret rapportert avvik - Tier 2-sokeordet
+ * "GASS" ble godkjent for artikkelen "EU vil forby olje og gass fra Arktis"
+ * (Energi og Klima) uten at noen av kontekstordene (skip, shipping, maritim,
+ * rederi, Maritime CleanTech) er synlige i ingressen slik den vises i
+ * e-postrapporten.
+ *
+ * Henter Energi og Klima-kildene pa nytt og kjorer den EKTE produksjons-
+ * funksjonen finnMatchendeSokeord() mot hver artikkel (ikke en kopi av
+ * logikken - vi tester det faktiske kodepunktet). For hvert Tier 2-sokeord
+ * der selve ordet finnes i teksten, logges i tillegg en fullstendig manuell
+ * gjennomgang av kontekstsjekken, slik at vi kan se noyaktig hvor et
+ * eventuelt avvik mellom "skal godkjennes" og "ble faktisk godkjent" oppstar.
+ *
+ * @param {Spreadsheet} ss
+ */
+function diagnostiserTier2Kontekstsjekk(ss) {
+  Logger.log('--- DIAGNOSTIKK 4: Tier 2-kontekstsjekk (fokus: "GASS" / Energi og Klima) ---');
+
+  var sokeordListe = hentSokeord(ss);
+  var kilder = hentKilder(ss);
+
+  var energiOgKlimaKilder = kilder.filter(function (k) {
+    return k.navn.toLowerCase().indexOf('energi og klima') !== -1;
+  });
+
+  if (energiOgKlimaKilder.length === 0) {
+    Logger.log('Fant ingen kilde med "Energi og Klima" i navnet - kan ikke kjore denne diagnostikken.');
+    return;
+  }
+
+  for (var k = 0; k < energiOgKlimaKilder.length; k++) {
+    var kilde = energiOgKlimaKilder[k];
+    var resultat = hentRSSFeed(kilde.url);
+
+    if (!resultat.suksess) {
+      Logger.log('  "' + kilde.navn + '": henting feilet (' + resultat.feilmelding + ') - kan ikke sjekke na.');
+      continue;
+    }
+
+    Logger.log('  "' + kilde.navn + '": ' + resultat.artikler.length +
+      ' artikkel/artikler i feeden akkurat na (uavhengig av ferskhetsvindu).');
+
+    for (var a = 0; a < resultat.artikler.length; a++) {
+      var artikkel = resultat.artikler[a];
+      var tekst = artikkel.tittel + ' ' + artikkel.ingress;
+      var normalisertTekst = tekst.toLowerCase();
+
+      // Kjorer den EKTE produksjonsfunksjonen - vi diagnostiserer det
+      // faktiske kodepunktet, ikke en reimplementasjon av logikken.
+      var faktiskeTreff = finnMatchendeSokeord(tekst, sokeordListe);
+
+      var erKjentEksempel = normalisertTekst.indexOf('gass') !== -1 && normalisertTekst.indexOf('arktis') !== -1;
+
+      // For a holde loggen lesbar: kun artikler med minst ett faktisk treff,
+      // pluss det spesifikt rapporterte eksempelet uansett utfall.
+      if (faktiskeTreff.length === 0 && !erKjentEksempel) {
+        continue;
+      }
+
+      Logger.log('    Artikkel: "' + artikkel.tittel + '"' +
+        (erKjentEksempel ? '  <-- DETTE SER UT TIL A VAERE DET RAPPORTERTE EKSEMPELET' : ''));
+      Logger.log('      Full tekst sokt i (tittel + ingress, JSON): ' + JSON.stringify(tekst));
+      Logger.log('      Faktiske treff fra produksjonsfunksjonen finnMatchendeSokeord(): ' +
+        (faktiskeTreff.length > 0 ? faktiskeTreff.join(', ') : 'INGEN'));
+
+      for (var s = 0; s < sokeordListe.length; s++) {
+        var rad = sokeordListe[s];
+        if (rad.tier !== 2) continue;
+
+        var ordFunnet = normalisertTekst.indexOf(rad.sokeord.toLowerCase()) !== -1;
+        if (!ordFunnet) continue; // selve sokeordet er ikke engang i teksten - ikke relevant her
+
+        var kontekstordFunnet = [];
+        var kontekstordVisning = [];
+        for (var c = 0; c < rad.kontekstord.length; c++) {
+          var kFunnet = normalisertTekst.indexOf(rad.kontekstord[c].toLowerCase()) !== -1;
+          kontekstordFunnet.push(kFunnet);
+          kontekstordVisning.push('"' + rad.kontekstord[c] + '"=' + kFunnet);
+        }
+
+        var noenKontekstFunnet = kontekstordFunnet.indexOf(true) !== -1;
+        var faktiskGodkjent = faktiskeTreff.indexOf(rad.sokeord) !== -1;
+
+        Logger.log('      Tier 2-sokeord "' + rad.sokeord + '" (tier-verdi i minnet: ' + rad.tier +
+          ', datatype: ' + (typeof rad.tier) + ') - selve ordet ER funnet i teksten.');
+        Logger.log('        Kontekstord lest inn fra arket: [' +
+          rad.kontekstord.map(function (x) { return '"' + x + '"'; }).join(', ') + ']' +
+          (rad.kontekstord.length === 0 ? '  <-- INGEN kontekstord konfigurert for dette sokeordet' : ''));
+        Logger.log('        Kontekstsjekk per ord: ' +
+          (kontekstordVisning.length > 0 ? kontekstordVisning.join(', ') : '(ingen ord a sjekke)'));
+        Logger.log('        Minst ett kontekstord funnet? ' + noenKontekstFunnet);
+        Logger.log('        Ble sokeordet FAKTISK godkjent av produksjonsfunksjonen? ' + faktiskGodkjent);
+
+        if (faktiskGodkjent && !noenKontekstFunnet) {
+          Logger.log('        !!! AVVIK: godkjent UTEN at noe kontekstord ble funnet - logikkfeil bekreftet for dette tilfellet !!!');
+        } else if (!faktiskGodkjent && noenKontekstFunnet) {
+          Logger.log('        !!! AVVIK (motsatt retning): kontekstord funnet, men IKKE godkjent !!!');
+        } else {
+          Logger.log('        Konsistent - manuell sjekk og produksjonsfunksjonen er enige for dette sokeordet/denne artikkelen.');
+        }
+      }
+    }
   }
 }
