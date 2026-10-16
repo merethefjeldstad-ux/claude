@@ -1,10 +1,14 @@
-# Medieovervåking – Mal (Fase 1, Apps Script)
+# Medieovervåking – Mal (Fase 1 + valgfri Fase 2, Apps Script)
 
 Dette er en **generell, gjenbrukbar mal** for å sette opp en ny
 medieovervåking i Google Apps Script. Den er bygget på samme kode som
 «Maritime CleanTech»-overvåkingen (se `medieovervaking/`-mappen i dette
 repoet), men uten noe som er spesifikt for den overvåkingen, og uten de
 midlertidige feilsøkingsfilene som ble lagt til underveis der.
+
+Fase 1 (RSS → søkeordfiltrering → e-post) fungerer helt uten AI. Fase 2
+(valgfri AI-vurdering av relevans + notat per treff) er inkludert, men
+avslått som standard – se steg 6.
 
 Bruk denne malen hver gang du vil sette opp overvåking av et **nytt** tema
 (ny bransje, nytt firma, nytt interesseområde) i et **nytt** Google Sheet.
@@ -46,6 +50,14 @@ her gjør kun det den skal, uten noe ekstra.
    | `05_Deduplisering.gs`      | `05_Deduplisering`                   |
    | `06_Epost.gs`              | `06_Epost`                           |
    | `07_Hovedkjoring.gs`       | `07_Hovedkjoring`                    |
+   | `09_AITest.gs`             | `09_AITest`                          |
+   | `10_AIIntegrasjon.gs`      | `10_AIIntegrasjon`                   |
+
+   (Det finnes ingen `08`-fil i denne malen - den numreringen er reservert
+   for prosjekt-spesifikke feilsøkingsfiler, som i Maritime CleanTech-
+   mappen. `09` og `10` er AI-vurdering - se steg 6 under. De kan utelates
+   helt hvis du ikke skal bruke AI-vurdering ennå; resten av malen (Fase 1)
+   fungerer uten dem.)
 
    **VIKTIG ved innliming:** Apps Script legger automatisk inn en tom
    `function myFunction() { }` i hver nye fil. Merk ALT innhold i det tomme
@@ -85,7 +97,9 @@ sender. Det er den eneste tekst-tilpasningen som er nødvendig i selve koden.
 2. Godkjenn tilgangene Google ber om (regneark, Gmail, internett) – trykk
    **Avansert** → **Gå til (prosjektnavn) (usikkert)** → **Tillat**.
 3. Sjekk regnearket – fem nye faner skal ha dukket opp: `Kilder`, `Søkeord`,
-   `Mottakere`, `Sendte artikler`, `Kjøringslogg`.
+   `Mottakere`, `Sendte artikler`, `Kjøringslogg`. (`Sendte artikler` har nå
+   fem kolonner, inkl. to for AI-vurdering - se steg 6. `Kjøretidslogg`
+   opprettes automatisk forst nar du faktisk bruker AI-vurdering.)
 
 ---
 
@@ -131,17 +145,43 @@ Samme fremgangsmåte som i hovedprosjektet:
 
 ---
 
-## Hva er IKKE med i denne malen
+## 6. (Valgfritt) Skru på AI-vurdering av treff (Fase 2)
 
-- Ingen AI-oppsummering (Fase 2) – kun rå RSS-ingress, slik Fase 1 er
-  spesifisert. Koden er strukturert slik at dette kan legges til senere som
-  et eget steg mellom `04_Filtrering.gs` og `06_Epost.gs`, uten stor
-  omskriving.
-- Ingen av de midlertidige feilsøkingsfilene fra Maritime
-  CleanTech-prosjektet. Hvis du støter på noe som ser ut som en bug (f.eks.
-  treff som ikke burde skjedd, eller omvendt), bygg diagnostikk-logging
-  etter samme mønster som ble brukt der – ikke gjett deg frem til en fiks
-  uten å ha logget hva som faktisk skjer først.
+Dette er helt valgfritt – uten det kjører skriptet akkurat som ren Fase 1
+(rå RSS-ingress, ingen AI-kall). Aktiver det nar du vil at Claude skal
+vurdere relevans og skrive et kort notat for hvert nytt treff.
+
+1. Sett tre Script Properties (**Prosjektinnstillinger → Skriptegenskaper**):
+   - `ANTHROPIC_API_KEY` = din Anthropic API-nøkkel
+   - `AI_MODEL` = `claude-haiku-5-5` (rimelig) eller `claude-sonnet-5-5` (dyrere, bedre vurderinger)
+   - `AI_ENABLED` = `true` (alt annet, eller ikke satt i det hele tatt, betyr av)
+2. **Tilpass systemprompten.** Åpne `09_AITest.gs` og se på `AI_SYSTEM_PROMPT`
+   – den bruker allerede `PROSJEKTNAVN`, men vurder å legge til noen
+   setninger om HVA overvåkingen faktisk gjelder (bransje, nøkkelbegreper,
+   tvetydige søkeord som trenger kontekst – se eksemplene i selve filen).
+   Jo mer presist Claude vet hva «relevant» betyr for ditt tema, jo bedre
+   blir vurderingene.
+3. **(Anbefalt) Test forst med `runAiTest()`** før du slår det på i den
+   daglige kjøringen: lag en fane «AI-test» med kolonner
+   `Overskrift | Ingress | Kilde | Forventet` i A–D, fyll ut noen testrader,
+   og kjør `runAiTest()`. Resultatet skrives til E–K i samme fane – sjekk at
+   relevansvurderingene stemmer med det du forventet før du stoler på det
+   i skarp drift.
+4. Kjør `kjorTest` med `AI_ENABLED=true` og sjekk e-posten: hvert treff bør
+   nå ha et «AI-notat» under ingressen, og eventuelle treff AI-en mener er
+   irrelevante skal dukke opp i en egen seksjon «Mulig irrelevant» nederst
+   (fjernes aldri, bare omplassert). Sjekk ogsa den nye fanen
+   `Kjøretidslogg` for antall kall, tokens og anslått kostnad.
+
+**Sikkerhetsmekanismer innebygd:**
+- Maks 40 AI-kall per kjøring, i batcher på 5.
+- Eget tidsbudsjett på 4,5 minutter for AI-steget – brukes det opp, sendes
+  resten av treffene uten notat (ikke droppet).
+- AI-steget kan aldri blokkere e-postutsendingen, uansett hva som går galt
+  (nettverksfeil, API-feil, uventede svar).
+- Stopper automatisk (uten nye forsøk) hvis kontoens utgiftstak er nådd.
+- Hvert treff vurderes maks én gang noensinne – aldri på nytt for en
+  artikkel som allerede er registrert i «Sendte artikler».
 
 ## Kjente begrensninger (samme som hovedprosjektet)
 

@@ -33,19 +33,43 @@ function hentSendteUrler(ss) {
 }
 
 /**
- * Legger til nye URL-er i "Sendte artikler"-fanen etter vellykket utsending.
+ * Legger til nye artikler i "Sendte artikler"-fanen etter vellykket
+ * utsending, inkludert AI-vurdering (relevans + notat) hvis den finnes.
  *
  * @param {Spreadsheet} ss
- * @param {Array<Object>} nyeArtikler - liste med {url, tittel}
+ * @param {Array<Object>} nyeTreff - liste med treffobjekter, dvs.
+ *   {lenke, tittel, ...}. aiRelevant/aiNotat er valgfrie felt - treff som
+ *   ikke ble AI-vurdert (AI avslatt, tidsbudsjett brukt opp, feil) lagres
+ *   med "ikke vurdert".
  */
-function leggTilSendteUrler(ss, nyeArtikler) {
-  if (nyeArtikler.length === 0) return;
+function leggTilSendteUrler(ss, nyeTreff) {
+  if (nyeTreff.length === 0) return;
 
   var ark = ss.getSheetByName(FANE_SENDTE_ARTIKLER);
+  sikreSendteArtiklerKolonner(ark);
+
   var naa = new Date();
-  var rader = nyeArtikler.map(function (a) {
-    return [a.url, naa, a.tittel];
+  var rader = nyeTreff.map(function (t) {
+    var relevantTekst = (t.aiRelevant === true) ? 'ja' :
+      (t.aiRelevant === false) ? 'nei' : 'ikke vurdert';
+    return [t.lenke, naa, t.tittel, relevantTekst, t.aiNotat || ''];
   });
 
-  ark.getRange(ark.getLastRow() + 1, 1, rader.length, 3).setValues(rader);
+  ark.getRange(ark.getLastRow() + 1, 1, rader.length, 5).setValues(rader);
+}
+
+/**
+ * Sikrer at "Sendte artikler"-fanen har de 5 kolonnene (inkl. AI-kolonnene
+ * lagt til for Fase 2). Eldre ark som kun hadde URL/Dato/Overskrift far
+ * de to nye kolonneoverskriftene lagt til automatisk - ingen manuell
+ * oppdatering av eksisterende ark er nodvendig.
+ *
+ * @param {Sheet} ark
+ */
+function sikreSendteArtiklerKolonner(ark) {
+  if (ark.getLastColumn() >= 5) return;
+
+  var overskrifter = ['URL', 'Dato lagt til', 'Overskrift', 'AI Relevant', 'AI Notat'];
+  ark.getRange(1, 1, 1, overskrifter.length).setValues([overskrifter]);
+  ark.getRange(1, 1, 1, overskrifter.length).setFontWeight('bold');
 }

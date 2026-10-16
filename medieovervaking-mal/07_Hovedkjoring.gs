@@ -8,8 +8,13 @@
  *   3. Filtrer artikler fra siste TIDSVINDU_ARTIKKEL_TIMER timer (se
  *      01_Konfigurasjon.gs - satt til 72t) mot sokeordlisten
  *   4. Dedupliser mot tidligere sendte artikler
- *   5. Bygg og send statusrapport pa e-post
- *   6. Logg resultatet per kilde i "Kjoringslogg" og oppdater "Kilder"
+ *   5. (Fase 2, valgfritt) La AI vurdere relevans og skrive notat for de
+ *      NYE treffene - se 10_AIIntegrasjon.gs. Styres av Script Property
+ *      AI_ENABLED. Feiler AI-steget av noen grunn stopper det ALDRI
+ *      e-postutsendingen - se try/catch rundt kallet under.
+ *   6. Bygg og send statusrapport pa e-post
+ *   7. Logg resultatet per kilde i "Kjoringslogg", AI-statistikk i
+ *      "Kjøretidslogg", og oppdater "Kilder" og "Sendte artikler"
  *
  * To funksjoner kaller denne logikken:
  *   - kjorDaglig(): satt opp med en tidsutlosning (trigger) kl. ca 06:45
@@ -44,7 +49,6 @@ function kjorMedieovervaking() {
   }
 
   var treffPerKategori = {};   // kategori -> liste med treffobjekter
-  var nyeSendteUrler = [];     // URL-er som skal skrives til "Sendte artikler" etter utsending
   var antallOk = 0;
   var antallFeilet = 0;
   var feilendeKilderNavn = [];
@@ -113,7 +117,6 @@ function kjorMedieovervaking() {
         matchendeOrd: matchendeOrd
       });
 
-      nyeSendteUrler.push({ url: artikkel.lenke, tittel: artikkel.tittel });
       // Merk denne som "sett" ogsa lokalt, i tilfelle samme URL dukker opp
       // flere ganger i samme kjoring (f.eks. fra flere kilder)
       sendteUrlerSet[artikkel.lenke] = true;
@@ -126,15 +129,34 @@ function kjorMedieovervaking() {
       TIDSVINDU_ARTIKKEL_TIMER + 't, ' + treffTeller + ' nye treff.');
   }
 
+  // --- Fase 2 (valgfritt): la AI vurdere relevans og skrive notat ---
+  // Alle NYE treff (allerede dedupliserte over) samles i en flat liste og
+  // sendes til vurderTreffMedAI() i 10_AIIntegrasjon.gs, som muterer hvert
+  // treff-objekt med .aiRelevant (true/false/null) og .aiNotat. Hele
+  // kallet star i try/catch: uansett hva som gar galt i AI-steget (nettverk,
+  // uventet API-endring, feil i egen kode) skal e-posten ALLTID sendes
+  // etterpa, bare uten AI-notat for de(n) som ikke rakk a bli vurdert.
+  var alleNyeTreff = samleAlleTreff(treffPerKategori);
+  var aiStatistikk = { antallKall: 0, tokensInn: 0, tokensUt: 0, kostnad: 0, feil: [], stoppetTidlig: false, stoppArsak: '' };
+
+  try {
+    aiStatistikk = vurderTreffMedAI(alleNyeTreff);
+  } catch (e) {
+    var uventetFeil = 'Uventet feil i AI-steget - fortsetter uten AI-notat: ' + e.message;
+    Logger.log(uventetFeil);
+    aiStatistikk.feil.push(uventetFeil);
+  }
+  loggAiKjoretid(ss, aiStatistikk);
+
   Logger.log('Bygger e-post-HTML...');
-  var html = byggEpostHtml(treffPerKategori, antallOk, kilder.length, antallFeilet, feilendeKilderNavn);
+  var html = byggEpostHtml(treffPerKategori, antallOk, kilder.length, antallFeilet, feilendeKilderNavn, aiStatistikk);
 
   Logger.log('Sender e-post til ' + mottakere.length + ' mottaker(e)...');
   sendEpost(mottakere, html);
 
-  if (nyeSendteUrler.length > 0) {
-    Logger.log('Registrerer ' + nyeSendteUrler.length + ' nye artikkel-URL-er i "' + FANE_SENDTE_ARTIKLER + '".');
-    leggTilSendteUrler(ss, nyeSendteUrler);
+  if (alleNyeTreff.length > 0) {
+    Logger.log('Registrerer ' + alleNyeTreff.length + ' nye artikkel-URL-er (inkl. AI-vurdering) i "' + FANE_SENDTE_ARTIKLER + '".');
+    leggTilSendteUrler(ss, alleNyeTreff);
   }
 
   var totalTidSekunder = Math.round((new Date().getTime() - startTid) / 1000);
