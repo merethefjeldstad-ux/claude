@@ -31,6 +31,13 @@ rekkefølge under.
    | `05_Deduplisering.gs`     | `05_Deduplisering`                   |
    | `06_Epost.gs`             | `06_Epost`                           |
    | `07_Hovedkjoring.gs`      | `07_Hovedkjoring`                    |
+   | `09_AITest.gs`            | `09_AITest`                          |
+   | `10_AIIntegrasjon.gs`     | `10_AIIntegrasjon`                   |
+   | `11_EpostMerkevare.gs`    | `11_EpostMerkevare`                  |
+
+   (`08_Diagnostikk.gs` var en midlertidig feilsøkingsfil og er ikke
+   lenger en del av det normale oppsettet. `09`–`11` er Fase 2/designet
+   e-post – se egne seksjoner under.)
 
 5. Åpne **manifest-filen** `appsscript.json` i Apps Script-editoren
    (du må kanskje slå den på via tannhjulet **Prosjektinnstillinger** →
@@ -135,6 +142,53 @@ regnearket – uten at du trenger å lese kode eller logger i Apps Script.
 Skriptet kjører nå automatisk hver morgen. Du kan følge med på om det
 går bra via fanen **Kjøringslogg** i regnearket, eller via **Utførelser**
 («Executions») i Apps Script-editoren.
+
+---
+
+## Merkevaredesignet e-post (logo, farger, Drive-tilgang)
+
+E-posten sendes nå i et merkevaredesignet HTML-oppsett (farger/typografi
+fra maritimecleantech.no/brand) i stedet for den enkle Fase 1-visningen.
+Utvalg, gruppering, KI-vurdering, feilhåndtering og sendetidspunkt er
+uendret – kun utseendet er nytt. Bygging av den nye malen er i try/catch:
+feiler den av noen grunn, sendes e-posten automatisk i det gamle, enkle
+formatet i stedet – e-posten uteblir aldri.
+
+### Logo (valgfritt, men anbefalt)
+
+1. Last opp logoen som PNG til Google Disk (den kontoen skriptet kjører som).
+2. Finn fil-ID-en: åpne filen i Disk, kopiér ID-en fra URL-en
+   (`.../d/`**`FIL-ID-EN-HER`**`/view`).
+3. Sett Script Property `LOGO_FILE_ID` til denne verdien.
+4. Uten `LOGO_FILE_ID` (eller hvis filen ikke finnes/henting feiler) vises
+   «Maritime CleanTech» som fet tekst i stedet – e-posten sendes som vanlig,
+   og feilen logges i **Kjøretidslogg**.
+
+**Ny tillatelse du må godkjenne:** siden skriptet nå henter en fil fra
+Google Disk (`DriveApp.getFileById(...).getBlob()`), vil du få en ny
+autorisasjonsdialog neste gang du kjører noe (samme type som før, men nå
+med en ekstra linje om Disk-tilgang). Du vil se enten *«Se Google
+Disk-filene dine»* (kun lesetilgang) eller den bredere *«Se, rediger,
+opprett og slett alle Google Disk-filene dine»*, avhengig av hvordan Apps
+Script klassifiserer dette automatisk – skriptet bruker uansett kun
+LESETILGANG til denne ene filen, det skriver eller sletter aldri noe i
+Disk. Godkjenn den dialogen som dukker opp for logoen skal fungere.
+
+### Test FØR dere går live: `previewEmail()`
+
+1. Velg funksjonen **`previewEmail`** i nedtrekksmenyen og trykk **Kjør**.
+2. Sender en e-post med eksempeldata KUN til din egen innboks (aldri til
+   «Mottakere»-fanen, og påvirker ikke «Sendte artikler»/dedup).
+3. Sjekk e-posten i **både Gmail (nettleser) og Outlook** – spesielt de
+   avrundede hjørnene på KI-notat-boksen (vises fint i Gmail, men Outlook
+   skrivebord viser rette hjørner – en kjent begrensning i HTML-e-post,
+   ikke noe som kan rettes med ren CSS).
+4. Kjør den **én gang med `LOGO_FILE_ID` satt** og **én gang uten**
+   (fjern/tøm verdien midlertidig), så du ser begge variantene.
+5. Luften rundt selve logoen er satt til en fornuftig standardverdi (ikke
+   målt mot den faktiske fila) – juster `padding` rundt `<img>`-taggen i
+   `byggEpostHtmlMerkevare()` i `11_EpostMerkevare.gs` hvis det ikke ser
+   riktig ut mot den ekte logoen.
 
 ---
 

@@ -146,13 +146,42 @@ function kjorMedieovervaking() {
     Logger.log(uventetFeil);
     aiStatistikk.feil.push(uventetFeil);
   }
-  loggAiKjoretid(ss, aiStatistikk);
 
-  Logger.log('Bygger e-post-HTML...');
-  var html = byggEpostHtml(treffPerKategori, antallOk, kilder.length, antallFeilet, feilendeKilderNavn, aiStatistikk);
+  // --- Bygg og send merkevaredesignet e-post, med fail-safe til gammelt
+  // format (06_Epost.gs, helt uendret) hvis NOE som helst feiler her - se
+  // 11_EpostMerkevare.gs. Logo-henting og mal-bygging kan begge feile uten
+  // at e-postutsendingen stopper. Eventuelle feil havner i aiStatistikk.feil
+  // slik at de vises i samme Kjøretidslogg-rad som AI-feil.
+  Logger.log('Bygger merkevaredesignet e-post-HTML...');
+  var logoResultat = hentLogoBlob();
+  if (logoResultat.feilmelding) {
+    Logger.log('Logo: ' + logoResultat.feilmelding);
+    aiStatistikk.feil.push('Logo: ' + logoResultat.feilmelding);
+  }
+
+  var html = null;
+  var tekstversjon = null;
+  try {
+    html = byggEpostHtmlMerkevare(treffPerKategori, antallOk, kilder.length, antallFeilet,
+      feilendeKilderNavn, aiStatistikk, !!logoResultat.blob);
+    tekstversjon = byggEpostTekstversjonMerkevare(treffPerKategori, antallOk, kilder.length,
+      antallFeilet, feilendeKilderNavn, aiStatistikk);
+  } catch (e) {
+    var merkevareFeil = 'Klarte ikke a bygge merkevaredesignet e-post - sender gammelt format i stedet: ' + e.message;
+    Logger.log(merkevareFeil);
+    aiStatistikk.feil.push(merkevareFeil);
+    html = null;
+  }
 
   Logger.log('Sender e-post til ' + mottakere.length + ' mottaker(e)...');
-  sendEpost(mottakere, html);
+  if (html) {
+    sendEpostMedLogo(mottakere, html, tekstversjon, logoResultat.blob);
+  } else {
+    var gammelHtml = byggEpostHtml(treffPerKategori, antallOk, kilder.length, antallFeilet, feilendeKilderNavn, aiStatistikk);
+    sendEpost(mottakere, gammelHtml);
+  }
+
+  loggAiKjoretid(ss, aiStatistikk);
 
   if (alleNyeTreff.length > 0) {
     Logger.log('Registrerer ' + alleNyeTreff.length + ' nye artikkel-URL-er (inkl. AI-vurdering) i "' + FANE_SENDTE_ARTIKLER + '".');
