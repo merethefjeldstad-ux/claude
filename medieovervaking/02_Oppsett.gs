@@ -28,7 +28,7 @@ function forsteGangsOppsett() {
     ['E-post']);
 
   opprettFaneHvisManglende(ss, FANE_SENDTE_ARTIKLER,
-    ['URL', 'Dato lagt til', 'Overskrift']);
+    ['URL', 'Dato lagt til', 'Overskrift', 'AI Relevant', 'AI Notat']);
 
   opprettFaneHvisManglende(ss, FANE_KJORINGSLOGG,
     ['Tidspunkt', 'Kilde', 'Status', 'Feilmelding', 'Antall treff']);
