@@ -13,9 +13,13 @@
  * (byggEpostHtml() i 06_Epost.gs, HELT uendret av dette arbeidet) -
  * e-posten skal ALLTID ga ut, uansett hva som skjer her.
  *
- * FARGENE UNDER ER PLASSHOLDERE - bytt dem ut med din egen merkevareprofil
- * for du tar denne i bruk (se "ENDRE"-kommentarene). PROSJEKTNAVN og
- * KONTAKTPERSON_NAVN/KONTAKTPERSON_EPOST settes i 01_Konfigurasjon.gs.
+ * Fargepalett, logo og organisasjonsnavn under er Maritime CleanTechs
+ * FASTE merkevareprofil (maritimecleantech.no/brand) - denne malen er
+ * ment for NYE OVERVAKINGSTEMAER innenfor SAMME organisasjon, sa
+ * fargene/logoen skal IKKE endres fra ark til ark. Det som varierer per
+ * overvaking er PROSJEKTNAVN (temaet, brukt i tittel/emnefelt) og
+ * KONTAKTPERSON_NAVN/KONTAKTPERSON_EPOST (begge i 01_Konfigurasjon.gs) -
+ * ikke selve merkevaren.
  *
  * Tabellbasert layout med inline CSS + bgcolor-attributter (for best mulig
  * visning i Outlook). Ingen CSS-gradienter, ingen webfonter, ingen
@@ -27,18 +31,20 @@
  * HTML-e-post pa tvers av klienter, ikke noe som kan rettes med ren CSS.
  */
 
-// --- Fargepalett - PLASSHOLDERE, bytt ut med din egen merkevareprofil ---
-var MAL_FARGE_OVERSKRIFT = '#1A2B4C';        // ENDRE: overskrifter, tittel
-var MAL_FARGE_BRODTEKST = '#3D4852';         // ENDRE: brodtekst
-var MAL_FARGE_DEMPET = '#6B7280';            // ENDRE: dempet tekst (kilde, dato, bunntekst)
-var MAL_FARGE_SKILLELINJE = '#D1D5DB';       // ENDRE: skillelinjer
-var MAL_BAKGRUNN_KORT = '#FFFFFF';           // bakgrunn i selve e-posten
-var MAL_BAKGRUNN_YTRE = '#F3F4F6';           // bakgrunn bak e-postkortet
-var MAL_FARGE_KI_NOTAT_BAKGRUNN = '#ECFDF5'; // ENDRE: KI-notat-boks
-var MAL_FARGE_LENKE = '#2563EB';             // ENDRE: lenker og "Les saken"
-var MAL_BAKGRUNN_IRRELEVANT = '#F5F5F5';     // "Mulig irrelevant"-seksjon
+// --- Offisielle Maritime CleanTech-farger (maritimecleantech.no/brand) -
+// faste for organisasjonen, IKKE noe som endres per overvakingstema ---
+var MC_DEEP_BLUE = '#001530';           // overskrifter, tittel
+var MC_DEEP_BLUE_700 = '#314257';       // brodtekst
+var MC_DEEP_BLUE_500 = '#626F7F';       // dempet tekst (kilde, dato, bunntekst)
+var MC_DEEP_BLUE_200 = '#C4C8CE';       // skillelinjer
+var MC_BAKGRUNN_KORT = '#FFFFFF';       // bakgrunn i selve e-posten
+var MC_BAKGRUNN_YTRE = '#E6E9ED';       // bakgrunn bak e-postkortet
+var MC_MINT_BAKGRUNN = '#E9FFF0';       // KI-notat-boks
+var MC_INNOVATION_BLUE = '#0066FF';     // lenker og "Les saken"
+var MC_IRRELEVANT_BAKGRUNN = '#F5F5F5'; // "Mulig irrelevant"-seksjon
 
-var MAL_FONT_STACK = 'Inter, Arial, Helvetica, sans-serif';
+var MC_FONT_STACK = 'Inter, Arial, Helvetica, sans-serif';
+var MC_ORGANISASJONSNAVN = 'Maritime CleanTech'; // vises i logo-alt-tekst og tekstlogo-fallback
 
 /**
  * Henter logobilde fra Google Drive via Script Property LOGO_FILE_ID.
@@ -112,61 +118,67 @@ function byggEpostHtmlMerkevare(treffPerKategori, antallOk, totaltAntallKilder, 
   var kategorier = Object.keys(partisjon.relevantePerKategori).sort();
   var dagensDatoTekst = Utilities.formatDate(new Date(), TIDSSONE, 'EEEE d. MMMM yyyy');
 
-  var html = '<html><body style="margin:0;padding:0;background-color:' + MAL_BAKGRUNN_YTRE + ';">';
+  var html = '<html><body style="margin:0;padding:0;background-color:' + MC_BAKGRUNN_YTRE + ';">';
   html += '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="' +
-    MAL_BAKGRUNN_YTRE + '" style="background-color:' + MAL_BAKGRUNN_YTRE + ';">';
+    MC_BAKGRUNN_YTRE + '" style="background-color:' + MC_BAKGRUNN_YTRE + ';">';
   html += '<tr><td align="center" style="padding:24px 12px;">';
   html += '<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="' +
-    MAL_BAKGRUNN_KORT + '" style="background-color:' + MAL_BAKGRUNN_KORT + ';max-width:600px;width:100%;">';
+    MC_BAKGRUNN_KORT + '" style="background-color:' + MC_BAKGRUNN_KORT + ';max-width:600px;width:100%;">';
 
   // --- HODE ---
-  // Logo (eller tekstlogo med PROSJEKTNAVN) oppe til venstre, deretter
-  // tittel, deretter dato. Luft rundt selve logoen holdes med en egen
-  // wrapping-div (padding-bottom) slik at <img>-taggens style-attributt
-  // forblir noyaktig slik spesifisert, uten ekstra inline-stiler pa den.
-  // Juster padding-verdien under hvis det ikke matcher logoens faktiske
-  // proporsjoner.
-  html += '<tr><td bgcolor="' + MAL_BAKGRUNN_KORT + '" style="background-color:' + MAL_BAKGRUNN_KORT +
-    ';padding:24px 32px 20px 32px;border-bottom:1px solid ' + MAL_FARGE_SKILLELINJE + ';font-family:' + MAL_FONT_STACK + ';">';
+  // Logo (eller tekstlogo med organisasjonsnavnet - MC_ORGANISASJONSNAVN,
+  // IKKE PROSJEKTNAVN, siden logoen representerer organisasjonen, ikke
+  // overvakingstemaet) oppe til venstre, deretter tittel, deretter dato.
+  // Luft rundt selve logoen holdes med en egen wrapping-div (padding-bottom)
+  // slik at <img>-taggens style-attributt forblir noyaktig slik spesifisert,
+  // uten ekstra inline-stiler pa den. Juster padding-verdien under hvis det
+  // ikke matcher logoens faktiske proporsjoner.
+  html += '<tr><td bgcolor="' + MC_BAKGRUNN_KORT + '" style="background-color:' + MC_BAKGRUNN_KORT +
+    ';padding:24px 32px 20px 32px;border-bottom:1px solid ' + MC_DEEP_BLUE_200 + ';font-family:' + MC_FONT_STACK + ';">';
   if (harLogo) {
     html += '<div style="padding:0 0 20px 0;">' +
-      '<img src="cid:logo" alt="' + escapeAttributt(PROSJEKTNAVN) + '" height="40" style="display:block;border:0;height:40px;width:auto;">' +
+      '<img src="cid:logo" alt="' + escapeAttributt(MC_ORGANISASJONSNAVN) + '" height="40" style="display:block;border:0;height:40px;width:auto;">' +
       '</div>';
   } else {
-    html += '<div style="font-size:18px;font-weight:bold;color:' + MAL_FARGE_OVERSKRIFT + ';margin:0 0 20px 0;">' +
-      escapeHtml(PROSJEKTNAVN) + '</div>';
+    html += '<div style="font-size:18px;font-weight:bold;color:' + MC_DEEP_BLUE + ';margin:0 0 20px 0;">' +
+      escapeHtml(MC_ORGANISASJONSNAVN) + '</div>';
   }
-  html += '<div style="font-size:30px;line-height:36px;font-weight:bold;color:' + MAL_FARGE_OVERSKRIFT + ';margin:0;">Dagens medietreff.</div>';
-  html += '<div style="font-size:13px;line-height:18px;color:' + MAL_FARGE_DEMPET + ';margin:6px 0 0 0;">' +
+  html += '<div style="font-size:30px;line-height:36px;font-weight:bold;color:' + MC_DEEP_BLUE + ';margin:0;">Dagens medietreff.</div>';
+  // PROSJEKTNAVN (overvakingstemaet) vises her - ikke i logoen/tekstlogoen
+  // over, som alltid viser organisasjonen (Maritime CleanTech). Viktig nar
+  // samme mottaker far flere ulike temaovervakinger fra samme organisasjon.
+  html += '<div style="font-size:16px;line-height:22px;font-weight:bold;color:' + MC_DEEP_BLUE_500 + ';margin:4px 0 0 0;">' +
+    escapeHtml(PROSJEKTNAVN) + '</div>';
+  html += '<div style="font-size:13px;line-height:18px;color:' + MC_DEEP_BLUE_500 + ';margin:6px 0 0 0;">' +
     escapeHtml(dagensDatoTekst) + '</div>';
   html += '</td></tr>';
 
   // --- KORT OPPSUMMERING ---
-  html += '<tr><td bgcolor="' + MAL_BAKGRUNN_KORT + '" style="background-color:' + MAL_BAKGRUNN_KORT +
-    ';padding:20px 32px;font-family:' + MAL_FONT_STACK + ';border-bottom:1px solid ' + MAL_FARGE_SKILLELINJE + ';">';
-  html += '<div style="font-size:16px;line-height:22px;color:' + MAL_FARGE_BRODTEKST + ';">';
-  html += '<strong style="color:' + MAL_FARGE_OVERSKRIFT + ';">' + partisjon.totaltAntallTreff + ' treff</strong> i dag';
+  html += '<tr><td bgcolor="' + MC_BAKGRUNN_KORT + '" style="background-color:' + MC_BAKGRUNN_KORT +
+    ';padding:20px 32px;font-family:' + MC_FONT_STACK + ';border-bottom:1px solid ' + MC_DEEP_BLUE_200 + ';">';
+  html += '<div style="font-size:16px;line-height:22px;color:' + MC_DEEP_BLUE_700 + ';">';
+  html += '<strong style="color:' + MC_DEEP_BLUE + ';">' + partisjon.totaltAntallTreff + ' treff</strong> i dag';
   if (partisjon.irrelevanteTreff.length > 0) {
-    html += ', hvorav <strong style="color:' + MAL_FARGE_OVERSKRIFT + ';">' + partisjon.irrelevanteTreff.length +
+    html += ', hvorav <strong style="color:' + MC_DEEP_BLUE + ';">' + partisjon.irrelevanteTreff.length +
       '</strong> under «Mulig irrelevant»';
   }
   html += '.</div>';
-  html += '<div style="font-size:13px;line-height:20px;color:' + MAL_FARGE_DEMPET + ';margin-top:6px;">';
+  html += '<div style="font-size:13px;line-height:20px;color:' + MC_DEEP_BLUE_500 + ';margin-top:6px;">';
   html += antallOk + ' av ' + totaltAntallKilder + ' kilder hentet OK.';
   if (antallFeilet > 0) {
     html += ' ' + antallFeilet + ' kilde(r) feilet: ' + escapeHtml(feilendeKilderNavn.join(', ')) + '.';
   }
   html += '</div>';
   if (aiStatistikk && aiStatistikk.stoppetTidlig) {
-    html += '<div style="font-size:13px;line-height:20px;color:' + MAL_FARGE_DEMPET + ';margin-top:6px;">' +
+    html += '<div style="font-size:13px;line-height:20px;color:' + MC_DEEP_BLUE_500 + ';margin-top:6px;">' +
       'AI-vurdering stoppet underveis: ' + escapeHtml(aiStatistikk.stoppArsak) + '</div>';
   }
   html += '</td></tr>';
 
   // --- TREFF ---
   if (partisjon.totaltAntallTreff === 0) {
-    html += '<tr><td bgcolor="' + MAL_BAKGRUNN_KORT + '" style="background-color:' + MAL_BAKGRUNN_KORT +
-      ';padding:24px 32px;font-family:' + MAL_FONT_STACK + ';font-size:16px;color:' + MAL_FARGE_BRODTEKST + ';">';
+    html += '<tr><td bgcolor="' + MC_BAKGRUNN_KORT + '" style="background-color:' + MC_BAKGRUNN_KORT +
+      ';padding:24px 32px;font-family:' + MC_FONT_STACK + ';font-size:16px;color:' + MC_DEEP_BLUE_700 + ';">';
     html += 'Ingen treff mot søkeordlisten i dag.';
     html += '</td></tr>';
   } else {
@@ -174,9 +186,9 @@ function byggEpostHtmlMerkevare(treffPerKategori, antallOk, totaltAntallKilder, 
       var kategori = kategorier[k];
       var treffListe = partisjon.relevantePerKategori[kategori];
 
-      html += '<tr><td bgcolor="' + MAL_BAKGRUNN_KORT + '" style="background-color:' + MAL_BAKGRUNN_KORT +
-        ';padding:20px 32px 0 32px;font-family:' + MAL_FONT_STACK + ';">';
-      html += '<div style="font-size:18px;line-height:24px;font-weight:bold;color:' + MAL_FARGE_OVERSKRIFT +
+      html += '<tr><td bgcolor="' + MC_BAKGRUNN_KORT + '" style="background-color:' + MC_BAKGRUNN_KORT +
+        ';padding:20px 32px 0 32px;font-family:' + MC_FONT_STACK + ';">';
+      html += '<div style="font-size:18px;line-height:24px;font-weight:bold;color:' + MC_DEEP_BLUE +
         ';margin:0 0 4px 0;">' + escapeHtml(kategori) + '</div>';
       html += '</td></tr>';
 
@@ -186,11 +198,11 @@ function byggEpostHtmlMerkevare(treffPerKategori, antallOk, totaltAntallKilder, 
     }
 
     if (partisjon.irrelevanteTreff.length > 0) {
-      html += '<tr><td bgcolor="' + MAL_BAKGRUNN_IRRELEVANT + '" style="background-color:' + MAL_BAKGRUNN_IRRELEVANT +
-        ';padding:20px 32px;font-family:' + MAL_FONT_STACK + ';">';
-      html += '<div style="font-size:16px;line-height:22px;font-weight:bold;color:' + MAL_FARGE_DEMPET +
+      html += '<tr><td bgcolor="' + MC_IRRELEVANT_BAKGRUNN + '" style="background-color:' + MC_IRRELEVANT_BAKGRUNN +
+        ';padding:20px 32px;font-family:' + MC_FONT_STACK + ';">';
+      html += '<div style="font-size:16px;line-height:22px;font-weight:bold;color:' + MC_DEEP_BLUE_500 +
         ';margin:0 0 4px 0;">Mulig irrelevant</div>';
-      html += '<div style="font-size:13px;line-height:18px;color:' + MAL_FARGE_DEMPET + ';margin:0 0 14px 0;">' +
+      html += '<div style="font-size:13px;line-height:18px;color:' + MC_DEEP_BLUE_500 + ';margin:0 0 14px 0;">' +
         'Disse matchet et søkeord, men AI-vurderingen mener de trolig ikke er relevante. Sjekk selv ved tvil.</div>';
       for (var ir = 0; ir < partisjon.irrelevanteTreff.length; ir++) {
         html += byggIrrelevantRadHtmlMerkevare(partisjon.irrelevanteTreff[ir], ir === partisjon.irrelevanteTreff.length - 1);
@@ -200,12 +212,12 @@ function byggEpostHtmlMerkevare(treffPerKategori, antallOk, totaltAntallKilder, 
   }
 
   // --- BUNNTEKST ---
-  html += '<tr><td bgcolor="' + MAL_BAKGRUNN_KORT + '" style="background-color:' + MAL_BAKGRUNN_KORT +
-    ';padding:20px 32px;font-family:' + MAL_FONT_STACK + ';border-top:1px solid ' + MAL_FARGE_SKILLELINJE + ';">';
-  html += '<div style="font-size:12px;line-height:18px;color:' + MAL_FARGE_DEMPET + ';">';
+  html += '<tr><td bgcolor="' + MC_BAKGRUNN_KORT + '" style="background-color:' + MC_BAKGRUNN_KORT +
+    ';padding:20px 32px;font-family:' + MC_FONT_STACK + ';border-top:1px solid ' + MC_DEEP_BLUE_200 + ';">';
+  html += '<div style="font-size:12px;line-height:18px;color:' + MC_DEEP_BLUE_500 + ';">';
   html += 'Denne e-posten sendes automatisk hver morgen av medieovervåkingsskriptet. ';
   html += 'Spørsmål? Ta kontakt med ' + escapeHtml(KONTAKTPERSON_NAVN) + ' (<a href="mailto:' +
-    escapeAttributt(KONTAKTPERSON_EPOST) + '" style="color:' + MAL_FARGE_LENKE + ';">' +
+    escapeAttributt(KONTAKTPERSON_EPOST) + '" style="color:' + MC_INNOVATION_BLUE + ';">' +
     escapeHtml(KONTAKTPERSON_EPOST) + '</a>).';
   html += '</div>';
   html += '</td></tr>';
@@ -227,31 +239,31 @@ function byggEpostHtmlMerkevare(treffPerKategori, antallOk, totaltAntallKilder, 
  * @return {string}
  */
 function byggTreffKortHtmlMerkevare(treff, erSiste) {
-  var html = '<tr><td bgcolor="' + MAL_BAKGRUNN_KORT + '" style="background-color:' + MAL_BAKGRUNN_KORT +
-    ';padding:16px 32px ' + (erSiste ? '20px' : '16px') + ' 32px;font-family:' + MAL_FONT_STACK +
-    (erSiste ? '' : ';border-bottom:1px solid ' + MAL_FARGE_SKILLELINJE) + ';">';
+  var html = '<tr><td bgcolor="' + MC_BAKGRUNN_KORT + '" style="background-color:' + MC_BAKGRUNN_KORT +
+    ';padding:16px 32px ' + (erSiste ? '20px' : '16px') + ' 32px;font-family:' + MC_FONT_STACK +
+    (erSiste ? '' : ';border-bottom:1px solid ' + MC_DEEP_BLUE_200) + ';">';
 
-  html += '<div style="font-size:12px;line-height:16px;color:' + MAL_FARGE_DEMPET + ';margin:0 0 6px 0;">' +
+  html += '<div style="font-size:12px;line-height:16px;color:' + MC_DEEP_BLUE_500 + ';margin:0 0 6px 0;">' +
     escapeHtml(treff.kilde) + ' · ' + escapeHtml(treff.matchendeOrd.join(', ')) + '</div>';
 
   html += '<a href="' + escapeAttributt(treff.lenke) + '" style="display:block;font-size:19px;line-height:25px;font-weight:bold;color:' +
-    MAL_FARGE_LENKE + ';text-decoration:none;margin:0 0 6px 0;">' + escapeHtml(treff.tittel) + '</a>';
+    MC_INNOVATION_BLUE + ';text-decoration:none;margin:0 0 6px 0;">' + escapeHtml(treff.tittel) + '</a>';
 
   if (treff.ingress) {
-    html += '<div style="font-size:16px;line-height:22px;color:' + MAL_FARGE_BRODTEKST + ';margin:0 0 10px 0;">' +
+    html += '<div style="font-size:16px;line-height:22px;color:' + MC_DEEP_BLUE_700 + ';margin:0 0 10px 0;">' +
       escapeHtml(avkortTekst(treff.ingress, 180)) + '</div>';
   }
 
   if (treff.aiNotat) {
     html += '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="' +
-      MAL_FARGE_KI_NOTAT_BAKGRUNN + '" style="background-color:' + MAL_FARGE_KI_NOTAT_BAKGRUNN + ';border-radius:8px;margin:0 0 10px 0;">' +
+      MC_MINT_BAKGRUNN + '" style="background-color:' + MC_MINT_BAKGRUNN + ';border-radius:8px;margin:0 0 10px 0;">' +
       '<tr><td style="padding:12px 14px;border-radius:8px;">';
-    html += '<div style="font-size:14px;line-height:20px;color:' + MAL_FARGE_OVERSKRIFT + ';">' + escapeHtml(treff.aiNotat) + '</div>';
+    html += '<div style="font-size:14px;line-height:20px;color:' + MC_DEEP_BLUE + ';">' + escapeHtml(treff.aiNotat) + '</div>';
     html += '</td></tr></table>';
   }
 
   html += '<a href="' + escapeAttributt(treff.lenke) + '" style="font-size:14px;line-height:18px;font-weight:bold;color:' +
-    MAL_FARGE_LENKE + ';text-decoration:none;">Les saken →</a>';
+    MC_INNOVATION_BLUE + ';text-decoration:none;">Les saken →</a>';
 
   html += '</td></tr>';
   return html;
@@ -266,14 +278,14 @@ function byggTreffKortHtmlMerkevare(treff, erSiste) {
  * @return {string}
  */
 function byggIrrelevantRadHtmlMerkevare(treff, erSiste) {
-  var html = '<div style="' + (erSiste ? '' : 'padding-bottom:12px;margin-bottom:12px;border-bottom:1px solid ' + MAL_FARGE_SKILLELINJE + ';') + '">';
+  var html = '<div style="' + (erSiste ? '' : 'padding-bottom:12px;margin-bottom:12px;border-bottom:1px solid ' + MC_DEEP_BLUE_200 + ';') + '">';
 
   html += '<a href="' + escapeAttributt(treff.lenke) + '" style="display:block;font-size:14px;line-height:19px;font-weight:bold;color:' +
-    MAL_FARGE_LENKE + ';text-decoration:none;margin:0 0 2px 0;">' + escapeHtml(treff.tittel) + '</a>';
-  html += '<div style="font-size:12px;line-height:16px;color:' + MAL_FARGE_DEMPET + ';margin:0 0 4px 0;">' +
+    MC_INNOVATION_BLUE + ';text-decoration:none;margin:0 0 2px 0;">' + escapeHtml(treff.tittel) + '</a>';
+  html += '<div style="font-size:12px;line-height:16px;color:' + MC_DEEP_BLUE_500 + ';margin:0 0 4px 0;">' +
     escapeHtml(treff.kilde) + '</div>';
   if (treff.aiBegrunnelse) {
-    html += '<div style="font-size:12px;line-height:17px;color:' + MAL_FARGE_DEMPET + ';font-style:italic;">' +
+    html += '<div style="font-size:12px;line-height:17px;color:' + MC_DEEP_BLUE_500 + ';font-style:italic;">' +
       escapeHtml(treff.aiBegrunnelse) + '</div>';
   }
   html += '</div>';
@@ -298,7 +310,7 @@ function byggEpostTekstversjonMerkevare(treffPerKategori, antallOk, totaltAntall
   var dagensDatoTekst = Utilities.formatDate(new Date(), TIDSSONE, 'EEEE d. MMMM yyyy');
 
   var linjer = [];
-  linjer.push('MEDIEOVERVÅKING ' + PROSJEKTNAVN.toUpperCase() + ' - ' + dagensDatoTekst);
+  linjer.push(MC_ORGANISASJONSNAVN.toUpperCase() + ' - MEDIEOVERVÅKING ' + PROSJEKTNAVN.toUpperCase() + ' - ' + dagensDatoTekst);
   linjer.push('');
   linjer.push(partisjon.totaltAntallTreff + ' treff i dag' +
     (partisjon.irrelevanteTreff.length > 0 ? ', hvorav ' + partisjon.irrelevanteTreff.length + ' under "Mulig irrelevant"' : '') + '.');

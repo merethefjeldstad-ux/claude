@@ -89,14 +89,16 @@ Bytt ut teksten i anførselstegnene, f.eks.:
 ```js
 var PROSJEKTNAVN = 'Offshore Vind Norge';
 var KONTAKTPERSON_NAVN = 'Kari Nordmann';
-var KONTAKTPERSON_EPOST = 'kari@firma.no';
+var KONTAKTPERSON_EPOST = 'kari@maritimecleantech.no';
 ```
 
-`PROSJEKTNAVN` brukes i overskriften, emnefeltet og tekstlogoen på
-e-posten. `KONTAKTPERSON_NAVN`/`KONTAKTPERSON_EPOST` vises i bunnteksten
-på den merkevaredesignede e-posten (se steg 7). Dette er den eneste
-tekst-tilpasningen som er strengt nødvendig for at koden skal fungere -
-men se også steg 7 for å bytte ut plassholder-fargene.
+`PROSJEKTNAVN` er **temaet** for akkurat denne overvåkingen - vises som
+undertittel i e-posten og i emnefeltet. `KONTAKTPERSON_NAVN`/
+`KONTAKTPERSON_EPOST` vises i bunnteksten på den merkevaredesignede
+e-posten (se steg 7) - typisk den som eier dette overvåkingstemaet internt.
+Dette er den eneste tekst-tilpasningen som er nødvendig. Merkevaren selv
+(farger, logo, organisasjonsnavnet «Maritime CleanTech» i hodet) er FAST
+og skal ikke endres - se steg 7.
 
 ---
 
@@ -203,22 +205,26 @@ akkurat de samme - kun utseendet er nytt. Feiler bygging av den nye malen
 av noen grunn, faller skriptet automatisk tilbake til den enkle,
 velprøvde e-posten (`06_Epost.gs`, urørt) - e-posten uteblir aldri.
 
-### Bytt ut plassholder-fargene
+### Fargene er FASTE - ikke noe å tilpasse
 
-Åpne `11_EpostMerkevare.gs` og se de øverste konstantene
-(`MAL_FARGE_OVERSKRIFT`, `MAL_FARGE_BRODTEKST`, `MAL_FARGE_LENKE` osv.) -
-alle merket **«ENDRE»**. Bytt dem ut med din egen merkevareprofil (hex-koder
-fra din egen fargepalett) før e-posten går live.
+`11_EpostMerkevare.gs` bruker Maritime CleanTechs offisielle
+merkevarefarger (`MC_DEEP_BLUE`, `MC_INNOVATION_BLUE` osv., hentet fra
+maritimecleantech.no/brand) og organisasjonsnavnet i logo/tekstlogo
+(`MC_ORGANISASJONSNAVN`). Dette er bevisst **ikke** gjort om til
+plassholdere - malen er ment for nye overvåkingstemaer **innenfor samme
+organisasjon**, så merkevaren skal se lik ut på tvers av alle temaene.
+Det eneste som varierer per tema er `PROSJEKTNAVN` (vises som undertittel
+i e-posten) og kontaktpersonen - se steg 2.
 
-### Logo (valgfritt)
+### Logo (valgfritt - samme logofil som hovedprosjektet kan gjenbrukes)
 
 1. Last opp logoen som PNG til Google Disk (den kontoen skriptet kjører som).
 2. Finn fil-ID-en: åpne filen i Disk, kopiér ID-en fra URL-en
    (`.../d/`**`FIL-ID-EN-HER`**`/view`).
 3. Sett Script Property `LOGO_FILE_ID` til denne verdien.
 4. Uten `LOGO_FILE_ID` (eller hvis filen ikke finnes/henting feiler) vises
-   `PROSJEKTNAVN` som fet tekst i stedet - e-posten sendes som vanlig, og
-   feilen logges i **Kjøretidslogg**.
+   «Maritime CleanTech» som fet tekst i stedet - e-posten sendes som
+   vanlig, og feilen logges i **Kjøretidslogg**.
 
 **Ny tillatelse du må godkjenne:** siden skriptet henter en fil fra Google
 Disk (`DriveApp.getFileById(...).getBlob()`), vil du få en ny
