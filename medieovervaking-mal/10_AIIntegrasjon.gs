@@ -45,8 +45,11 @@ var FANE_KJORETIDSLOGG = 'Kjøretidslogg';
  * Vurderer en liste med NYE treff (allerede filtrert mot "Sendte artikler"
  * av kjorMedieovervaking() for denne kalles) med Claude: relevans (true/
  * false) og et kort notat. Muterer HVERT treff-objekt i listen direkte med:
- *   treff.aiRelevant - true / false / null (null = ikke vurdert)
- *   treff.aiNotat    - string (tom hvis ikke vurdert)
+ *   treff.aiRelevant    - true / false / null (null = ikke vurdert)
+ *   treff.aiNotat       - string (tom hvis ikke vurdert)
+ *   treff.aiBegrunnelse - string (AI-ens begrunnelse for relevansvurderingen,
+ *                         tom hvis ikke vurdert - brukt i e-postens "Mulig
+ *                         irrelevant"-seksjon, se 11_EpostMerkevare.gs)
  *
  * @param {Array<Object>} treffListe - treff-objekter med minst
  *   {tittel, ingress, kilde, lenke}
@@ -139,6 +142,7 @@ function vurderTreffMedAI(treffListe) {
 
       batch[i].aiRelevant = tolket.relevant;
       batch[i].aiNotat = tolket.notat || '';
+      batch[i].aiBegrunnelse = tolket.begrunnelse || '';
 
       if (tolket.feilmelding) {
         statistikk.feil.push('"' + batch[i].tittel + '": ' + tolket.feilmelding);
@@ -233,6 +237,7 @@ function tolkAiRespons(httpRespons, aiModell) {
     return {
       relevant: null,
       notat: '',
+      begrunnelse: '',
       tokensInn: tokensInn,
       tokensUt: tokensUt,
       kostnad: kostnad,
@@ -243,6 +248,7 @@ function tolkAiRespons(httpRespons, aiModell) {
   return {
     relevant: tolketJson.relevant,
     notat: tolketJson.notat || '',
+    begrunnelse: tolketJson.begrunnelse || '',
     tokensInn: tokensInn,
     tokensUt: tokensUt,
     kostnad: kostnad
@@ -271,8 +277,14 @@ function samleAlleTreff(treffPerKategori) {
  * Logger AI-kjoringsstatistikk for dagens kjoring til "Kjøretidslogg".
  * Oppretter fanen automatisk (med overskrifter) forste gang den trengs.
  *
+ * Feil-kolonnen samler na ogsa eventuelle logo-/e-postmal-feil fra
+ * 11_EpostMerkevare.gs (se kallet i 07_Hovedkjoring.gs) - ikke bare
+ * AI-feil - siden dette er det ene stedet i regnearket som samler
+ * "noe gikk galt denne kjoringen, men e-posten ble sendt likevel".
+ *
  * @param {Spreadsheet} ss
- * @param {Object} statistikk - se vurderTreffMedAI()
+ * @param {Object} statistikk - se vurderTreffMedAI(). .feil kan inneholde
+ *   bade AI-, logo- og e-postmal-feilmeldinger, slatt sammen av kalleren.
  */
 function loggAiKjoretid(ss, statistikk) {
   var ark = ss.getSheetByName(FANE_KJORETIDSLOGG);

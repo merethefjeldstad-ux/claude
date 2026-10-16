@@ -17,6 +17,13 @@
 var PROSJEKTNAVN = '[SKRIV INN NAVN PA OVERVAKINGEN HER]';
 
 // ---------------------------------------------------------------------
+// Kontaktperson - vises i bunnteksten pa den merkevaredesignede e-posten
+// (se 11_EpostMerkevare.gs). ENDRE DISSE for du tar i bruk malen.
+// ---------------------------------------------------------------------
+var KONTAKTPERSON_NAVN = '[SKRIV INN NAVN HER]';
+var KONTAKTPERSON_EPOST = '[SKRIV INN E-POST HER]';
+
+// ---------------------------------------------------------------------
 // Navn pa fanene (arkene) i regnearket
 // ---------------------------------------------------------------------
 var FANE_KILDER = 'Kilder';

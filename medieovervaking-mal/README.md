@@ -52,11 +52,13 @@ her gjør kun det den skal, uten noe ekstra.
    | `07_Hovedkjoring.gs`       | `07_Hovedkjoring`                    |
    | `09_AITest.gs`             | `09_AITest`                          |
    | `10_AIIntegrasjon.gs`      | `10_AIIntegrasjon`                   |
+   | `11_EpostMerkevare.gs`     | `11_EpostMerkevare`                  |
 
    (Det finnes ingen `08`-fil i denne malen - den numreringen er reservert
    for prosjekt-spesifikke feilsøkingsfiler, som i Maritime CleanTech-
-   mappen. `09` og `10` er AI-vurdering - se steg 6 under. De kan utelates
-   helt hvis du ikke skal bruke AI-vurdering ennå; resten av malen (Fase 1)
+   mappen. `09`-`11` er AI-vurdering og merkevaredesignet e-post - se steg
+   6 og 7 under. De kan utelates helt hvis du ikke skal bruke dem ennå;
+   resten av malen (Fase 1, med den enkle e-postmalen i `06_Epost.gs`)
    fungerer uten dem.)
 
    **VIKTIG ved innliming:** Apps Script legger automatisk inn en tom
@@ -72,22 +74,29 @@ her gjør kun det den skal, uten noe ekstra.
 
 ---
 
-## 2. ENDRE prosjektnavnet (det eneste du MÅ tilpasse i koden)
+## 2. ENDRE prosjektnavn og kontaktperson (det eneste du MÅ tilpasse i koden)
 
-Åpne `01_Konfigurasjon.gs` og finn denne linjen helt øverst:
+Åpne `01_Konfigurasjon.gs` og finn disse linjene helt øverst:
 
 ```js
 var PROSJEKTNAVN = '[SKRIV INN NAVN PA OVERVAKINGEN HER]';
+var KONTAKTPERSON_NAVN = '[SKRIV INN NAVN HER]';
+var KONTAKTPERSON_EPOST = '[SKRIV INN E-POST HER]';
 ```
 
-Bytt ut teksten i anførselstegnene med navnet på det du overvåker, f.eks.:
+Bytt ut teksten i anførselstegnene, f.eks.:
 
 ```js
 var PROSJEKTNAVN = 'Offshore Vind Norge';
+var KONTAKTPERSON_NAVN = 'Kari Nordmann';
+var KONTAKTPERSON_EPOST = 'kari@firma.no';
 ```
 
-Dette navnet brukes i overskriften og emnefeltet på e-posten skriptet
-sender. Det er den eneste tekst-tilpasningen som er nødvendig i selve koden.
+`PROSJEKTNAVN` brukes i overskriften, emnefeltet og tekstlogoen på
+e-posten. `KONTAKTPERSON_NAVN`/`KONTAKTPERSON_EPOST` vises i bunnteksten
+på den merkevaredesignede e-posten (se steg 7). Dette er den eneste
+tekst-tilpasningen som er strengt nødvendig for at koden skal fungere -
+men se også steg 7 for å bytte ut plassholder-fargene.
 
 ---
 
@@ -182,6 +191,56 @@ vurdere relevans og skrive et kort notat for hvert nytt treff.
 - Stopper automatisk (uten nye forsøk) hvis kontoens utgiftstak er nådd.
 - Hvert treff vurderes maks én gang noensinne – aldri på nytt for en
   artikkel som allerede er registrert i «Sendte artikler».
+
+---
+
+## 7. (Valgfritt) Merkevaredesignet HTML-e-post
+
+Malen inkluderer en tabellbasert, merkevaredesignet HTML-e-post
+(`11_EpostMerkevare.gs`) som alternativ til den enkle Fase 1-e-posten i
+`06_Epost.gs`. Utvalg, gruppering, KI-vurdering og feilhåndtering er
+akkurat de samme - kun utseendet er nytt. Feiler bygging av den nye malen
+av noen grunn, faller skriptet automatisk tilbake til den enkle,
+velprøvde e-posten (`06_Epost.gs`, urørt) - e-posten uteblir aldri.
+
+### Bytt ut plassholder-fargene
+
+Åpne `11_EpostMerkevare.gs` og se de øverste konstantene
+(`MAL_FARGE_OVERSKRIFT`, `MAL_FARGE_BRODTEKST`, `MAL_FARGE_LENKE` osv.) -
+alle merket **«ENDRE»**. Bytt dem ut med din egen merkevareprofil (hex-koder
+fra din egen fargepalett) før e-posten går live.
+
+### Logo (valgfritt)
+
+1. Last opp logoen som PNG til Google Disk (den kontoen skriptet kjører som).
+2. Finn fil-ID-en: åpne filen i Disk, kopiér ID-en fra URL-en
+   (`.../d/`**`FIL-ID-EN-HER`**`/view`).
+3. Sett Script Property `LOGO_FILE_ID` til denne verdien.
+4. Uten `LOGO_FILE_ID` (eller hvis filen ikke finnes/henting feiler) vises
+   `PROSJEKTNAVN` som fet tekst i stedet - e-posten sendes som vanlig, og
+   feilen logges i **Kjøretidslogg**.
+
+**Ny tillatelse du må godkjenne:** siden skriptet henter en fil fra Google
+Disk (`DriveApp.getFileById(...).getBlob()`), vil du få en ny
+autorisasjonsdialog neste gang du kjører noe - enten *«Se Google
+Disk-filene dine»* (lesetilgang) eller den bredere *«Se, rediger, opprett
+og slett alle Google Disk-filene dine»*, avhengig av hvordan Apps Script
+klassifiserer dette automatisk. Skriptet bruker uansett kun LESETILGANG
+til denne ene filen. Godkjenn den dialogen som dukker opp for logoen skal
+fungere.
+
+### Test FØR dere går live: `previewEmail()`
+
+1. Velg funksjonen **`previewEmail`** i nedtrekksmenyen og trykk **Kjør**.
+2. Sender en e-post med eksempeldata KUN til din egen innboks (aldri til
+   «Mottakere»-fanen, og påvirker ikke «Sendte artikler»/dedup).
+3. Sjekk e-posten i **både Gmail (nettleser) og Outlook** - spesielt de
+   avrundede hjørnene på KI-notat-boksen (vises fint i Gmail, men Outlook
+   skrivebord viser rette hjørner - en kjent begrensning i HTML-e-post).
+4. Kjør den **én gang med `LOGO_FILE_ID` satt** og **én gang uten**, så du
+   ser begge variantene.
+
+---
 
 ## Kjente begrensninger (samme som hovedprosjektet)
 
