@@ -222,7 +222,11 @@ function byggTreffKortHtmlMerkevare(treff, erSiste) {
     (erSiste ? '' : ';border-bottom:1px solid ' + MC_DEEP_BLUE_200) + ';">';
 
   var kildeLinjeDeler = [escapeHtml(treff.kilde), escapeHtml(treff.matchendeOrd.join(', '))];
-  if (treff.aiKategori) kildeLinjeDeler.push(escapeHtml(treff.aiKategori));
+  if (treff.aiParseFeilet) {
+    kildeLinjeDeler.push('Ikke KI-vurdert');
+  } else if (treff.aiKategori) {
+    kildeLinjeDeler.push(escapeHtml(treff.aiKategori));
+  }
   html += '<div style="font-size:12px;line-height:16px;color:' + MC_DEEP_BLUE_500 + ';margin:0 0 6px 0;">';
   if (treff.aiNevnerOss) {
     html += '<span style="font-weight:bold;color:' + MC_INNOVATION_BLUE + ';">Nevner oss</span> · ';
@@ -312,7 +316,11 @@ function byggEpostTekstversjonMerkevare(treffPerKategori, antallOk, totaltAntall
         var treff = treffListe[t];
         linjer.push(treff.tittel);
         var kildeLinjeTekst = 'Kilde: ' + treff.kilde + ' | Søkeord: ' + treff.matchendeOrd.join(', ');
-        if (treff.aiKategori) kildeLinjeTekst += ' | Kategori: ' + treff.aiKategori;
+        if (treff.aiParseFeilet) {
+          kildeLinjeTekst += ' | Ikke KI-vurdert';
+        } else if (treff.aiKategori) {
+          kildeLinjeTekst += ' | Kategori: ' + treff.aiKategori;
+        }
         if (treff.aiNevnerOss) kildeLinjeTekst = 'Nevner oss | ' + kildeLinjeTekst;
         linjer.push(kildeLinjeTekst);
         if (treff.ingress) linjer.push(treff.ingress);
@@ -438,6 +446,18 @@ function previewEmail() {
         aiKategori: 'Energi og framdrift',
         aiNevnerOss: true,
         aiNotat: ''
+      },
+      {
+        tittel: 'Ny rapport om hydrogenfyllestasjoner langs kysten',
+        lenke: 'https://example.no/hydrogenfyllestasjoner-rapport',
+        ingress: 'Rapporten, utarbeidet i samarbeid med Ocean Charger-teamet, kartlegger behovet for fyllestasjoner de neste fem årene.',
+        kilde: 'TU',
+        matchendeOrd: ['hydrogen'],
+        aiRelevant: true,
+        aiKategori: '',
+        aiNevnerOss: true,
+        aiNotat: '',
+        aiParseFeilet: true
       }
     ],
     'Politikk og regulering': [

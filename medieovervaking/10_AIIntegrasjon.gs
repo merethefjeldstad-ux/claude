@@ -42,6 +42,31 @@ var AI_BATCH_STORRELSE = 5;
 var FANE_KJORETIDSLOGG = 'Kjøretidslogg';
 
 /**
+ * Anvender et tolket AI-resultat (fra tolkAiRespons()) pa ett treff-objekt
+ * og oppdaterer kjoringsstatistikken. Brukt bade for forste forsok og for
+ * retry-forsoket i vurderTreffMedAI(), slik at begge folger eksakt samme
+ * logikk nar resultatet skal skrives til treffet.
+ *
+ * @param {Object} treff
+ * @param {Object} tolket - se tolkAiRespons()
+ * @param {Object} statistikk
+ */
+function anvendTolketResultatPaaTreff(treff, tolket, statistikk) {
+  treff.aiRelevant = tolket.relevant;
+  treff.aiKategori = tolket.kategori || '';
+  treff.aiNevnerOss = tolket.nevnerOss === true;
+  treff.aiNotat = tolket.notat || '';
+  treff.aiIrrelevantGrunn = tolket.irrelevantGrunn || '';
+
+  if (tolket.feilmelding) {
+    statistikk.feil.push('"' + treff.tittel + '": ' + tolket.feilmelding);
+  }
+  if (typeof tolket.tokensInn === 'number') statistikk.tokensInn += tolket.tokensInn;
+  if (typeof tolket.tokensUt === 'number') statistikk.tokensUt += tolket.tokensUt;
+  if (typeof tolket.kostnad === 'number') statistikk.kostnad += tolket.kostnad;
+}
+
+/**
  * Vurderer en liste med NYE treff (allerede filtrert mot "Sendte artikler"
  * av kjorMedieovervaking() for denne kalles) med Claude: relevans (true/
  * false), kategori, om saken nevner oss, og et kort notat. Muterer HVERT
@@ -49,12 +74,21 @@ var FANE_KJORETIDSLOGG = 'Kjøretidslogg';
  *   treff.aiRelevant      - true / false / null (null = ikke vurdert)
  *   treff.aiKategori      - string, en av AI_KATEGORIER (09_AITest.gs),
  *                           tom hvis ikke vurdert
- *   treff.aiNevnerOss     - boolean (true kun hvis overskrift/ingress navngir
- *                           Maritime CleanTech, et prosjekt eller en partner)
+ *   treff.aiNevnerOss     - boolean (kode-treff i OUR_NAMES ELLER modellens
+ *                           svar - se 09_AITest.gs - alltid satt, ogsa ved feil)
  *   treff.aiNotat         - string (tom hvis ikke vurdert eller intet a notere)
  *   treff.aiIrrelevantGrunn - string, satt KUN nar aiRelevant er false - brukt
  *                           i e-postens "Mulig irrelevant"-seksjon, se
  *                           11_EpostMerkevare.gs
+ *   treff.aiParseFeilet   - boolean, true KUN hvis AI-svaret ikke kunne
+ *                           tolkes verken forste gang eller etter retry -
+ *                           brukt til a vise "Ikke KI-vurdert" i stedet for
+ *                           kategori i e-posten, se 11_EpostMerkevare.gs
+ *
+ * Ved parse-feil (ugyldig JSON i et ellers vellykket AI-svar) forsokes ETT
+ * nytt kall for det treffet (maks en gang). Begge forsokene teller i
+ * antallKall og kostnad, og kostnadsstoppen (sjekkForUtgiftstakStopp) gjelder
+ * likt for begge.
  *
  * @param {Array<Object>} treffListe - treff-objekter med minst
  *   {tittel, ingress, kilde, lenke}
@@ -105,6 +139,7 @@ function vurderTreffMedAI(treffListe) {
     ', i batcher pa ' + AI_BATCH_STORRELSE + '.');
 
   var aiStartTid = new Date().getTime();
+  var sisteRaFeilTekst = '';
 
   for (var start = 0; start < treffABehandle.length; start += AI_BATCH_STORRELSE) {
     var bruktMs = new Date().getTime() - aiStartTid;
@@ -132,9 +167,12 @@ function vurderTreffMedAI(treffListe) {
       continue; // prov neste batch i stedet for a stoppe helt
     }
 
+    var trengerRetry = [];
+
     for (var i = 0; i < batch.length; i++) {
       statistikk.antallKall++;
-      var tolket = tolkAiRespons(responser[i], aiModell);
+      var kildeTekst = batch[i].tittel + ' ' + (batch[i].ingress || '');
+      var tolket = tolkAiRespons(responser[i], aiModell, kildeTekst);
 
       if (tolket.stoppMelding) {
         // Utgiftstak nadd - stopp ALT videre AI-arbeid umiddelbart, ikke
@@ -146,22 +184,69 @@ function vurderTreffMedAI(treffListe) {
         return statistikk;
       }
 
-      batch[i].aiRelevant = tolket.relevant;
-      batch[i].aiKategori = tolket.kategori || '';
-      batch[i].aiNevnerOss = tolket.nevnerOss === true;
-      batch[i].aiNotat = tolket.notat || '';
-      batch[i].aiIrrelevantGrunn = tolket.irrelevantGrunn || '';
+      anvendTolketResultatPaaTreff(batch[i], tolket, statistikk);
 
       if (tolket.parseFeilet) {
-        statistikk.antallParseFeil++;
+        trengerRetry.push(batch[i]);
       }
-      if (tolket.feilmelding) {
-        statistikk.feil.push('"' + batch[i].tittel + '": ' + tolket.feilmelding);
-      }
-      if (typeof tolket.tokensInn === 'number') statistikk.tokensInn += tolket.tokensInn;
-      if (typeof tolket.tokensUt === 'number') statistikk.tokensUt += tolket.tokensUt;
-      if (typeof tolket.kostnad === 'number') statistikk.kostnad += tolket.kostnad;
     }
+
+    // --- Retry (maks en gang per treff) for de der AI-svaret ikke kunne
+    // tolkes - teller i antallKall/kostnad, og kostnadsstoppen gjelder likt.
+    if (trengerRetry.length > 0) {
+      Logger.log('Forsoker pa nytt for ' + trengerRetry.length + ' treff der AI-svaret ikke kunne tolkes...');
+      var retryForesporsler = trengerRetry.map(function (treff) {
+        return byggAiForesporsel(treff, apiKey, aiModell);
+      });
+
+      var retryResponser;
+      try {
+        retryResponser = UrlFetchApp.fetchAll(retryForesporsler);
+      } catch (e) {
+        var retryNettverksfeil = 'Nettverksfeil ved retry-kall til Claude (' + trengerRetry.length + ' treff): ' + e.message;
+        Logger.log(retryNettverksfeil);
+        statistikk.feil.push(retryNettverksfeil);
+        retryResponser = null;
+      }
+
+      if (retryResponser) {
+        for (var r = 0; r < trengerRetry.length; r++) {
+          statistikk.antallKall++;
+          var retryTreff = trengerRetry[r];
+          var retryKildeTekst = retryTreff.tittel + ' ' + (retryTreff.ingress || '');
+          var retryTolket = tolkAiRespons(retryResponser[r], aiModell, retryKildeTekst);
+
+          if (retryTolket.stoppMelding) {
+            statistikk.stoppetTidlig = true;
+            statistikk.stoppArsak = retryTolket.stoppMelding;
+            statistikk.feil.push(retryTolket.stoppMelding);
+            Logger.log('STOPPER AI-steget (ingen nye forsok): ' + retryTolket.stoppMelding);
+            return statistikk;
+          }
+
+          anvendTolketResultatPaaTreff(retryTreff, retryTolket, statistikk);
+
+          if (retryTolket.parseFeilet) {
+            statistikk.antallParseFeil++;
+            retryTreff.aiParseFeilet = true;
+            sisteRaFeilTekst = retryTolket.raFeilTekst || '(ingen rafeil-tekst)';
+            Logger.log('  Parse-feil (etter retry) for "' + retryTreff.tittel + '": ' + sisteRaFeilTekst);
+          }
+        }
+      } else {
+        // Retry-batchen feilet helt pa nettverksniva - behold forste forsoks
+        // resultat (allerede relevant=true/tom kategori via anvendTolketResultatPaaTreff).
+        for (var rr = 0; rr < trengerRetry.length; rr++) {
+          statistikk.antallParseFeil++;
+          trengerRetry[rr].aiParseFeilet = true;
+        }
+      }
+    }
+  }
+
+  if (statistikk.antallParseFeil > 0) {
+    statistikk.feil.push(statistikk.antallParseFeil + ' parse-feil denne kjoringen (etter retry).' +
+      (sisteRaFeilTekst ? ' Siste rå feil: ' + sisteRaFeilTekst.substring(0, 200) : ''));
   }
 
   Logger.log('AI-steget ferdig: ' + statistikk.antallKall + ' kall, ' +
@@ -217,29 +302,43 @@ function byggAiForesporsel(treff, apiKey, aiModell) {
  * et vellykket (HTTP 200) svar tolkes av den delte tolkAiKategoriseringsSvar()
  * i 09_AITest.gs, som runAiTest() ogsa bruker - garanterer identisk tolkning.
  *
+ * kildeTekstForNevnerOss (overskrift+ingress) sendes med i ALLE tilfeller,
+ * ogsa HTTP-feil/utgiftstak, slik at et kode-basert "nevner oss"-treff
+ * (OUR_NAMES i 09_AITest.gs) aldri forsvinner bare fordi AI-kallet feiler.
+ *
  * @param {HTTPResponse} httpRespons
  * @param {string} aiModell
+ * @param {string} kildeTekstForNevnerOss
  * @return {{relevant:(boolean|null), kategori:(string|undefined),
  *   nevnerOss:(boolean|undefined), notat:string,
  *   irrelevantGrunn:(string|undefined), parseFeilet:(boolean|undefined),
- *   tokensInn:(number|undefined), tokensUt:(number|undefined),
- *   kostnad:(number|undefined), feilmelding:(string|undefined),
- *   stoppMelding:(string|undefined)}}
+ *   raFeilTekst:(string|undefined), tokensInn:(number|undefined),
+ *   tokensUt:(number|undefined), kostnad:(number|undefined),
+ *   feilmelding:(string|undefined), stoppMelding:(string|undefined)}}
  */
-function tolkAiRespons(httpRespons, aiModell) {
+function tolkAiRespons(httpRespons, aiModell, kildeTekstForNevnerOss) {
   var httpKode = httpRespons.getResponseCode();
   var raTekst = httpRespons.getContentText();
   var svarJson = parseJsonTrygt(raTekst);
 
   var utgiftstakMelding = sjekkForUtgiftstakStopp(httpKode, svarJson);
   if (utgiftstakMelding) {
-    return { relevant: null, notat: '', stoppMelding: utgiftstakMelding };
+    var kodeTreffUtgiftstak = nevnerOssIKode(kildeTekstForNevnerOss);
+    return {
+      relevant: null, kategori: '', nevnerOss: kodeTreffUtgiftstak,
+      nevnerOssKilde: kodeTreffUtgiftstak ? 'kode' : '', notat: '', stoppMelding: utgiftstakMelding
+    };
   }
 
   if (httpKode < 200 || httpKode >= 300) {
     var feilmelding = (svarJson && svarJson.error && svarJson.error.message) ?
       svarJson.error.message : raTekst.substring(0, 300);
-    return { relevant: null, notat: '', feilmelding: 'HTTP-feil ' + httpKode + ': ' + feilmelding };
+    var kodeTreffHttp = nevnerOssIKode(kildeTekstForNevnerOss);
+    return {
+      relevant: null, kategori: '', nevnerOss: kodeTreffHttp,
+      nevnerOssKilde: kodeTreffHttp ? 'kode' : '', notat: '',
+      feilmelding: 'HTTP-feil ' + httpKode + ': ' + feilmelding
+    };
   }
 
   var tokensInn = (svarJson && svarJson.usage) ? svarJson.usage.input_tokens : undefined;
@@ -248,20 +347,20 @@ function tolkAiRespons(httpRespons, aiModell) {
   var kostnad = (typeof kostnadVerdi === 'number') ? kostnadVerdi : undefined;
 
   var tekstBlokk = hentForsteTekstBlokk(svarJson);
-  var tolket = tolkAiKategoriseringsSvar(tekstBlokk);
+  var tolket = tolkAiKategoriseringsSvar(tekstBlokk, kildeTekstForNevnerOss);
 
   return {
     relevant: tolket.relevant,
     kategori: tolket.kategori,
     nevnerOss: tolket.nevnerOss,
+    nevnerOssKilde: tolket.nevnerOssKilde,
     notat: tolket.notat,
     irrelevantGrunn: tolket.irrelevantGrunn,
     parseFeilet: tolket.parseFeilet,
+    raFeilTekst: tolket.parseFeilet ? byggRaFeilTekst(tekstBlokk, svarJson) : undefined,
     tokensInn: tokensInn,
     tokensUt: tokensUt,
-    kostnad: kostnad,
-    feilmelding: tolket.parseFeilet ?
-      'Klarte ikke a tolke AI-svaret som gyldig JSON - behandlet som relevant uten kategori.' : undefined
+    kostnad: kostnad
   };
 }
 

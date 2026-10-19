@@ -10,8 +10,9 @@
  * skriptet oppretter IKKE fanen):
  *   A Overskrift | B Ingress | C Kilde | D Forventet
  * Skriptet skriver til:
- *   E Relevant | F Kategori | G Nevner oss | H Notat | I Irrelevant grunn |
- *   J Tokens inn | K Tokens ut | L Kostnad USD | M Modell
+ *   E Relevant | F Kategori | G Nevner oss | H Nevner oss - kilde |
+ *   I Notat | J Irrelevant grunn | K Rå feil | L Tokens inn | M Tokens ut |
+ *   N Kostnad USD | O Modell
  *
  * Krever to Script Properties (Prosjektinnstillinger -> Skriptegenskaper):
  *   ANTHROPIC_API_KEY - din Anthropic API-nokkel
@@ -20,6 +21,37 @@
  *
  * Nokkelen logges ALDRI noe sted i dette skriptet.
  */
+
+// ---------------------------------------------------------------------
+// Navn/prosjekter som regnes som "oss" - uavhengig av hva AI-modellen
+// svarer. Sjekkes case-insensitivt mot overskrift+ingress for hvert treff.
+// Endelig nevner_oss = (treff i denne listen) ELLER (modellens nevner_oss).
+// Dette gjelder OGSA nar KI-kallet feiler eller ikke kan tolkes - nevner_oss
+// skal ALDRI ende opp som false/usynlig bare fordi AI-kallet feilet.
+//
+// Tvetydige navn (FLAGSHIPS, TrAM, Apollo, GASS, AWESOME) er IKKE med her
+// med vilje - de krever kontekst for a vite om de er "oss", og overlates
+// derfor til modellens egen vurdering, som i dag.
+// ---------------------------------------------------------------------
+var OUR_NAMES = [
+  'Maritime CleanTech', 'HyShip', 'Ocean Charger', 'Orcelle Horizon',
+  'AIMPERES', 'FIT-HORIZONS', 'LOWNOISER', 'STEESMAT', 'H2NOR', 'SeaThrive',
+  'Ship-aH2oy', 'Maritime AI Centre', 'CleanFlow Energy network'
+];
+
+/**
+ * @param {string} tekst - typisk overskrift + ingress
+ * @return {boolean} true hvis et av navnene i OUR_NAMES finnes i teksten
+ *   (case-insensitivt substreng-sok)
+ */
+function nevnerOssIKode(tekst) {
+  if (!tekst) return false;
+  var lav = String(tekst).toLowerCase();
+  for (var i = 0; i < OUR_NAMES.length; i++) {
+    if (lav.indexOf(OUR_NAMES[i].toLowerCase()) !== -1) return true;
+  }
+  return false;
+}
 
 // Fanenavn - endre her hvis du gir fanen et annet navn
 var FANE_AI_TEST = 'AI-test';
@@ -111,9 +143,112 @@ var AI_SYSTEM_PROMPT =
   '"nevner_oss": true/false, "notat": "...", "irrelevant_grunn": "..."}';
 
 /**
+ * Gjor ETT rått HTTP-kall til Claude. Kaster videre ved nettverksfeil
+ * (fanges av kalleren) - gjor INGEN tolkning selv, se
+ * gjorOgTolkEttKlaudeKall() for det.
+ *
+ * @param {string} apiKey
+ * @param {string} aiModell
+ * @param {string} brukerTekst
+ * @return {{httpKode:number, raTekst:string}}
+ */
+function gjorEttKlaudeKall(apiKey, aiModell, brukerTekst) {
+  var requestBody = {
+    model: aiModell,
+    max_tokens: 300,
+    system: AI_SYSTEM_PROMPT,
+    messages: [
+      { role: 'user', content: brukerTekst }
+    ]
+  };
+  var options = {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01'
+    },
+    payload: JSON.stringify(requestBody),
+    muteHttpExceptions: true
+  };
+  var respons = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', options);
+  return { httpKode: respons.getResponseCode(), raTekst: respons.getContentText() };
+}
+
+/**
+ * Gjor ETT API-kall til Claude og tolker det fullt ut: nettverksfeil,
+ * utgiftstak-stopp, HTTP-feil, og selve JSON-innholdet (via den delte
+ * tolkAiKategoriseringsSvar()). Brukes av runAiTest() for bade forste
+ * forsok og det ene retry-forsoket, slik at begge folger eksakt samme
+ * logikk - se krav om retry ved parse-feil.
+ *
+ * @param {string} apiKey
+ * @param {string} aiModell
+ * @param {string} brukerTekst
+ * @param {string} kildeTekstForNevnerOss
+ * @return {{type:string, tolket:(Object|undefined), raFeilTekst:(string|undefined),
+ *   tokensInn:*, tokensUt:*, kostnad:*, raTekst:(string|undefined),
+ *   feilmelding:(string|undefined), stoppMelding:(string|undefined)}}
+ *   type er en av: 'nettverksfeil' | 'utgiftstak' | 'http-feil' | 'ok'
+ */
+function gjorOgTolkEttKlaudeKall(apiKey, aiModell, brukerTekst, kildeTekstForNevnerOss) {
+  var kall;
+  try {
+    kall = gjorEttKlaudeKall(apiKey, aiModell, brukerTekst);
+  } catch (e) {
+    return { type: 'nettverksfeil', feilmelding: e.message };
+  }
+
+  var svarJson = parseJsonTrygt(kall.raTekst);
+
+  var utgiftstakMelding = sjekkForUtgiftstakStopp(kall.httpKode, svarJson);
+  if (utgiftstakMelding) {
+    return { type: 'utgiftstak', stoppMelding: utgiftstakMelding, raTekst: kall.raTekst };
+  }
+
+  if (kall.httpKode < 200 || kall.httpKode >= 300) {
+    var feilmelding = (svarJson && svarJson.error && svarJson.error.message) ?
+      svarJson.error.message : kall.raTekst.substring(0, 300);
+    return { type: 'http-feil', feilmelding: 'HTTP-feil ' + kall.httpKode + ': ' + feilmelding, raTekst: kall.raTekst };
+  }
+
+  var tokensInn = (svarJson && svarJson.usage) ? svarJson.usage.input_tokens : '';
+  var tokensUt = (svarJson && svarJson.usage) ? svarJson.usage.output_tokens : '';
+  var kostnad = beregnKostnad(aiModell, tokensInn, tokensUt);
+
+  var tekstBlokk = hentForsteTekstBlokk(svarJson);
+  var tolket = tolkAiKategoriseringsSvar(tekstBlokk, kildeTekstForNevnerOss);
+
+  return {
+    type: 'ok',
+    tolket: tolket,
+    raFeilTekst: tolket.parseFeilet ? byggRaFeilTekst(tekstBlokk, svarJson) : '',
+    tokensInn: tokensInn,
+    tokensUt: tokensUt,
+    kostnad: kostnad,
+    raTekst: kall.raTekst
+  };
+}
+
+/**
+ * Legger sammen to tall-eller-tom-streng-verdier (som tokensInn/tokensUt/
+ * kostnad kan vaere). Brukes til a summere forste forsok + retry-forsoket
+ * for samme rad i runAiTest().
+ *
+ * @param {number|string} a
+ * @param {number|string} b
+ * @return {number|string}
+ */
+function leggSammen(a, b) {
+  if (typeof a !== 'number' && typeof b !== 'number') return '';
+  return (typeof a === 'number' ? a : 0) + (typeof b === 'number' ? b : 0);
+}
+
+/**
  * Hovedfunksjonen - kjor denne manuelt fra Apps Script-editoren.
  * Leser rader fra "AI-test", kaller Claude for hver rad, og skriver
- * resultatet tilbake i kolonne E-K. Stopper sikkert ved tegn pa at
+ * resultatet tilbake i kolonne E-O. Forsoker en gang til (maks en gang
+ * per rad) hvis AI-svaret ikke kan tolkes. Stopper sikkert ved tegn pa at
  * utgiftstaket er nadd (se sjekkForUtgiftstakStopp()).
  */
 function runAiTest() {
@@ -179,95 +314,93 @@ function runAiTest() {
 
     Logger.log('Rad ' + radnummer + ': kaller Claude (' + aiModell + ') for "' + overskrift + '"...');
 
+    var kildeTekstForNevnerOss = overskrift + ' ' + ingress;
     var brukerTekst = 'Overskrift: ' + overskrift + '\nIngress: ' + ingress +
       (kilde ? '\nKilde: ' + kilde : '');
 
-    var requestBody = {
-      model: aiModell,
-      max_tokens: 300,
-      system: AI_SYSTEM_PROMPT,
-      messages: [
-        { role: 'user', content: brukerTekst }
-      ]
-    };
-
-    var options = {
-      method: 'post',
-      contentType: 'application/json',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01'
-      },
-      payload: JSON.stringify(requestBody),
-      muteHttpExceptions: true
-    };
-
-    var httpKode = null;
-    var raTekst = null;
-
-    try {
-      var respons = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', options);
-      httpKode = respons.getResponseCode();
-      raTekst = respons.getContentText();
-    } catch (e) {
-      Logger.log('  Nettverksfeil pa rad ' + radnummer + ': ' + e.message);
-      skrivAiResultat(ark, radnummer, 'usikker', '', '', 'Nettverksfeil: ' + e.message, '', '', '', '', aiModell);
-      antallBehandlet++;
-      continue;
-    }
+    var forsok = gjorOgTolkEttKlaudeKall(apiKey, aiModell, brukerTekst, kildeTekstForNevnerOss);
 
     // Logg ETT rarespons-eksempel forste gang, slik at vi kan se faktisk
     // responsform fra API-et. Responsen fra Anthropic inneholder aldri
     // API-nokkelen (den sendes kun i foresporselen, ikke i svaret).
-    if (!harLoggetRaRespons) {
-      Logger.log('RÅRESPONS-EKSEMPEL (HTTP ' + httpKode + '), kun for a se responsformen:');
-      Logger.log(raTekst);
+    if (!harLoggetRaRespons && forsok.raTekst) {
+      Logger.log('RÅRESPONS-EKSEMPEL, kun for a se responsformen:');
+      Logger.log(forsok.raTekst);
       harLoggetRaRespons = true;
     }
 
-    var svarJson = parseJsonTrygt(raTekst);
-
-    // --- Sjekk for utgiftstak-stopp FOR noe annet, per krav 6 ---
-    var utgiftstakMelding = sjekkForUtgiftstakStopp(httpKode, svarJson);
-    if (utgiftstakMelding) {
-      Logger.log('STOPPER runAiTest(): ' + utgiftstakMelding);
-      skrivAiResultat(ark, radnummer, 'usikker', '', '', 'STOPPET: ' + utgiftstakMelding, '', '', '', '', aiModell);
-      stoppet = true;
-      break;
-    }
-
-    if (httpKode < 200 || httpKode >= 300) {
-      var feilmelding = (svarJson && svarJson.error && svarJson.error.message) ?
-        svarJson.error.message : raTekst.substring(0, 300);
-      Logger.log('  HTTP-feil ' + httpKode + ' pa rad ' + radnummer + ': ' + feilmelding);
-      skrivAiResultat(ark, radnummer, 'usikker', '', '', 'HTTP-feil ' + httpKode + ': ' + feilmelding, '', '', '', '', aiModell);
+    if (forsok.type === 'nettverksfeil') {
+      Logger.log('  Nettverksfeil pa rad ' + radnummer + ': ' + forsok.feilmelding);
+      var kodeTreffNett = nevnerOssIKode(kildeTekstForNevnerOss);
+      skrivAiResultat(ark, radnummer, 'usikker', '', kodeTreffNett, kodeTreffNett ? 'kode' : '',
+        'Nettverksfeil: ' + forsok.feilmelding, '', '', '', '', '', aiModell);
       antallBehandlet++;
       continue;
     }
 
-    // --- Vellykket HTTP-kall (200) ---
-    var tokensInn = (svarJson && svarJson.usage) ? svarJson.usage.input_tokens : '';
-    var tokensUt = (svarJson && svarJson.usage) ? svarJson.usage.output_tokens : '';
-    var kostnad = beregnKostnad(aiModell, tokensInn, tokensUt);
-    if (typeof kostnad === 'number') {
-      totalKostnadDenneKjoringen += kostnad;
+    if (forsok.type === 'utgiftstak') {
+      Logger.log('STOPPER runAiTest(): ' + forsok.stoppMelding);
+      var kodeTreffStopp = nevnerOssIKode(kildeTekstForNevnerOss);
+      skrivAiResultat(ark, radnummer, 'usikker', '', kodeTreffStopp, kodeTreffStopp ? 'kode' : '',
+        'STOPPET: ' + forsok.stoppMelding, '', '', '', '', '', aiModell);
+      stoppet = true;
+      break;
     }
 
-    var tekstBlokk = hentForsteTekstBlokk(svarJson);
-    var tolket = tolkAiKategoriseringsSvar(tekstBlokk);
+    if (forsok.type === 'http-feil') {
+      Logger.log('  ' + forsok.feilmelding + ' (rad ' + radnummer + ')');
+      var kodeTreffHttp = nevnerOssIKode(kildeTekstForNevnerOss);
+      skrivAiResultat(ark, radnummer, 'usikker', '', kodeTreffHttp, kodeTreffHttp ? 'kode' : '',
+        forsok.feilmelding, '', '', '', '', '', aiModell);
+      antallBehandlet++;
+      continue;
+    }
+
+    // --- forsok.type === 'ok' ---
+    var tolket = forsok.tolket;
+    var tokensInn = forsok.tokensInn;
+    var tokensUt = forsok.tokensUt;
+    var kostnad = forsok.kostnad;
+    var raFeilTekst = forsok.raFeilTekst;
+    if (typeof kostnad === 'number') totalKostnadDenneKjoringen += kostnad;
 
     if (tolket.parseFeilet) {
-      antallParseFeil++;
-      Logger.log('  Klarte ikke a tolke AI-svaret som forventet JSON pa rad ' + radnummer +
-        ' - behandler som relevant uten kategori (se krav om parse-feil-handtering). ' +
-        'Ra tekst fra Claude: ' + (tekstBlokk || '(tom)'));
+      Logger.log('  Klarte ikke a tolke AI-svaret pa rad ' + radnummer + ' - forsoker en gang til...');
+      var retry = gjorOgTolkEttKlaudeKall(apiKey, aiModell, brukerTekst, kildeTekstForNevnerOss);
+
+      if (retry.type === 'utgiftstak') {
+        Logger.log('STOPPER runAiTest() (under retry): ' + retry.stoppMelding);
+        skrivAiResultat(ark, radnummer, 'usikker', '', tolket.nevnerOss, tolket.nevnerOssKilde,
+          'STOPPET (retry): ' + retry.stoppMelding, '', raFeilTekst, tokensInn, tokensUt, kostnad, aiModell);
+        stoppet = true;
+        break;
+      }
+
+      if (retry.type === 'ok') {
+        if (typeof retry.kostnad === 'number') totalKostnadDenneKjoringen += retry.kostnad;
+        tokensInn = leggSammen(tokensInn, retry.tokensInn);
+        tokensUt = leggSammen(tokensUt, retry.tokensUt);
+        kostnad = leggSammen(kostnad, retry.kostnad);
+        tolket = retry.tolket;
+        raFeilTekst = retry.raFeilTekst;
+      } else {
+        Logger.log('  Retry pa rad ' + radnummer + ' feilet ogsa (' + retry.type + '): ' +
+          (retry.feilmelding || '(ingen feilmelding)') + ' - behold forste forsoks resultat.');
+      }
+
+      if (tolket.parseFeilet) {
+        antallParseFeil++;
+        Logger.log('  Parse-feil (etter retry) pa rad ' + radnummer + ': ' +
+          (raFeilTekst || '(ingen rafeil-tekst)'));
+      }
     }
+
     if (!tolket.notat) {
       antallTommeNotater++;
     }
 
     skrivAiResultat(ark, radnummer, tolket.relevant ? 'ja' : 'nei', tolket.kategori,
-      tolket.nevnerOss, tolket.notat, tolket.irrelevantGrunn,
+      tolket.nevnerOss, tolket.nevnerOssKilde, tolket.notat, tolket.irrelevantGrunn, raFeilTekst,
       tokensInn, tokensUt, kostnad, aiModell);
 
     antallBehandlet++;
@@ -276,33 +409,37 @@ function runAiTest() {
   var totalTidSekunder = Math.round((new Date().getTime() - startTid) / 1000);
   Logger.log('=== Ferdig. ' + antallBehandlet + ' rad(er) behandlet' +
     (stoppet ? ' (STOPPET fore tiden - se melding over)' : '') +
-    '. Parse-feil: ' + antallParseFeil + '. Tomme notater: ' + antallTommeNotater + ' av ' +
+    '. Parse-feil (etter retry): ' + antallParseFeil + '. Tomme notater: ' + antallTommeNotater + ' av ' +
     antallBehandlet + '. Total kostnad denne kjoringen: $' + totalKostnadDenneKjoringen.toFixed(4) +
     '. Tid brukt: ' + totalTidSekunder + ' sekunder. ===');
 }
 
 /**
- * Skriver resultatkolonnene E-M for en gitt rad.
+ * Skriver resultatkolonnene E-O for en gitt rad.
  *
  * @param {Sheet} ark
  * @param {number} radnummer
  * @param {string} relevant - "ja" / "nei" / "usikker"
  * @param {string} kategori
  * @param {boolean|string} nevnerOss - true/false, eller "" ved feil/stopp (ikke vurdert)
+ * @param {string} nevnerOssKilde - "kode" / "modell" / "begge" / ""
  * @param {string} notat
  * @param {string} irrelevantGrunn
+ * @param {string} raFeil - diagnosetekst fra byggRaFeilTekst() ved parse-feil, ellers ""
  * @param {number|string} tokensInn
  * @param {number|string} tokensUt
  * @param {number|string} kostnad
  * @param {string} modell
  */
-function skrivAiResultat(ark, radnummer, relevant, kategori, nevnerOss, notat, irrelevantGrunn, tokensInn, tokensUt, kostnad, modell) {
-  ark.getRange(radnummer, 5, 1, 9).setValues([[
+function skrivAiResultat(ark, radnummer, relevant, kategori, nevnerOss, nevnerOssKilde, notat, irrelevantGrunn, raFeil, tokensInn, tokensUt, kostnad, modell) {
+  ark.getRange(radnummer, 5, 1, 11).setValues([[
     relevant,
     kategori,
     nevnerOss === true ? 'ja' : (nevnerOss === false ? 'nei' : ''),
+    nevnerOssKilde || '',
     notat,
     irrelevantGrunn,
+    raFeil || '',
     tokensInn,
     tokensUt,
     (typeof kostnad === 'number') ? kostnad : '',
@@ -406,29 +543,69 @@ function parseAiSvarJson(tekst) {
  * tolker AI-svaret pa eksakt samme mate.
  *
  * Ved parse-feil (ugyldig/manglende JSON, eller "relevant" som ikke er en
- * boolean) behandles treffet som relevant=true med tom kategori,
- * nevnerOss=false og tomt notat - IKKE som en egen "usikker"-tilstand.
- * parseFeilet=true lar kalleren telle opp antall parse-feil per kjoring.
+ * boolean) behandles treffet som relevant=true med tom kategori og tomt
+ * notat - IKKE som en egen "usikker"-tilstand. parseFeilet=true lar
+ * kalleren telle opp antall parse-feil per kjoring (etter ev. retry).
+ *
+ * nevnerOss er ALLTID (kode-treff i OUR_NAMES) ELLER (modellens svar) -
+ * ogsa nar parsingen feiler, slik at et kode-basert "nevner oss"-treff
+ * aldri forsvinner bare fordi AI-svaret ikke kunne tolkes.
  *
  * @param {string} tekstBlokk - Claudes svartekst (forste tekstblokk)
+ * @param {string} kildeTekstForNevnerOss - overskrift+ingress, brukt til
+ *   kode-basert nevnerOss-sjekk (nevnerOssIKode())
  * @return {{relevant:boolean, kategori:string, nevnerOss:boolean,
- *   notat:string, irrelevantGrunn:string, parseFeilet:boolean}}
+ *   nevnerOssKilde:string, notat:string, irrelevantGrunn:string,
+ *   parseFeilet:boolean}}
  */
-function tolkAiKategoriseringsSvar(tekstBlokk) {
+function tolkAiKategoriseringsSvar(tekstBlokk, kildeTekstForNevnerOss) {
   var tolket = tekstBlokk ? parseAiSvarJson(tekstBlokk) : null;
+  var kodeTreff = nevnerOssIKode(kildeTekstForNevnerOss);
 
   if (!tolket || typeof tolket.relevant !== 'boolean') {
-    return { relevant: true, kategori: '', nevnerOss: false, notat: '', irrelevantGrunn: '', parseFeilet: true };
+    return {
+      relevant: true,
+      kategori: '',
+      nevnerOss: kodeTreff,
+      nevnerOssKilde: kodeTreff ? 'kode' : '',
+      notat: '',
+      irrelevantGrunn: '',
+      parseFeilet: true
+    };
   }
+
+  var modellNevnerOss = tolket.nevner_oss === true;
+  var nevnerOssKilde = '';
+  if (kodeTreff && modellNevnerOss) nevnerOssKilde = 'begge';
+  else if (kodeTreff) nevnerOssKilde = 'kode';
+  else if (modellNevnerOss) nevnerOssKilde = 'modell';
 
   return {
     relevant: tolket.relevant,
     kategori: normaliserAiKategori(tolket.kategori),
-    nevnerOss: tolket.nevner_oss === true,
+    nevnerOss: kodeTreff || modellNevnerOss,
+    nevnerOssKilde: nevnerOssKilde,
     notat: typeof tolket.notat === 'string' ? tolket.notat : '',
     irrelevantGrunn: typeof tolket.irrelevant_grunn === 'string' ? tolket.irrelevant_grunn : '',
     parseFeilet: false
   };
+}
+
+/**
+ * Bygger en kort diagnosetekst for en rad/treff der AI-svaret ikke kunne
+ * tolkes: de forste 500 tegnene av Claudes svartekst, pluss stop_reason
+ * fra Anthropic-responsen (f.eks. "end_turn" eller "max_tokens" - sistnevnte
+ * forklarer ofte en avkuttet/ugyldig JSON). Brukt til kolonnen "Rå feil" i
+ * "AI-test" og i feiloppsummeringen i "Kjøretidslogg".
+ *
+ * @param {string} tekstBlokk
+ * @param {Object|null} svarJson - det fulle parsede API-svaret
+ * @return {string}
+ */
+function byggRaFeilTekst(tekstBlokk, svarJson) {
+  var stopReason = (svarJson && svarJson.stop_reason) ? svarJson.stop_reason : '(ukjent)';
+  var utdrag = (tekstBlokk || '').substring(0, 500);
+  return 'stop_reason=' + stopReason + ' | ' + utdrag;
 }
 
 /**
