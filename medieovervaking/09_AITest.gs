@@ -10,8 +10,8 @@
  * skriptet oppretter IKKE fanen):
  *   A Overskrift | B Ingress | C Kilde | D Forventet
  * Skriptet skriver til:
- *   E Relevant | F Begrunnelse | G Notat | H Tokens inn | I Tokens ut |
- *   J Kostnad USD | K Modell
+ *   E Relevant | F Kategori | G Nevner oss | H Notat | I Irrelevant grunn |
+ *   J Tokens inn | K Tokens ut | L Kostnad USD | M Modell
  *
  * Krever to Script Properties (Prosjektinnstillinger -> Skriptegenskaper):
  *   ANTHROPIC_API_KEY - din Anthropic API-nokkel
@@ -35,18 +35,80 @@ var AI_PRISER = {
   'claude-sonnet-5-5': { inn: 2, ut: 10 }
 };
 
+// Kategoriene AI-en kan velge mellom - ETT sted a endre/legge til kategorier.
+// Brukes bade til a bygge kategorilisten i prompten (byggAiKategoriListeForPrompt)
+// og til a validere/normalisere kategorien AI-en svarer med (normaliserAiKategori).
+var AI_KATEGORIER = [
+  { navn: 'Energi og framdrift', beskrivelse: 'alternative drivstoff som hydrogen, ammoniakk og metanol; batteri og elektrifisering; vindfremdrift' },
+  { navn: 'Skip, verft og havn', beskrivelse: 'verft, skipsbygging, landstrøm, havneinfrastruktur' },
+  { navn: 'Digitalisering og systemer', beskrivelse: 'KI, systemintegrasjon, energieffektivitet, automasjon' },
+  { navn: 'Politikk og regulering', beskrivelse: 'IMO/EU, støtteordninger, Enova, krav og rammevilkår' },
+  { navn: 'Annet', beskrivelse: 'saker som ikke passer naturlig inn i noen av kategoriene over' }
+];
+
+/**
+ * Bygger kategorilisten som settes inn i AI_SYSTEM_PROMPT under.
+ * @return {string}
+ */
+function byggAiKategoriListeForPrompt() {
+  return AI_KATEGORIER.map(function (k) {
+    return '- ' + k.navn + ' (' + k.beskrivelse + ')';
+  }).join('\n');
+}
+
+/**
+ * @param {string} kategori
+ * @return {boolean} true hvis kategori er et av navnene i AI_KATEGORIER
+ */
+function erGyldigAiKategori(kategori) {
+  for (var i = 0; i < AI_KATEGORIER.length; i++) {
+    if (AI_KATEGORIER[i].navn === kategori) return true;
+  }
+  return false;
+}
+
+/**
+ * Normaliserer en rå kategori-streng fra AI-svaret: gyldige kategorinavn
+ * beholdes uendret, alt annet (ukjent, tom, feil type) blir "Annet".
+ * @param {*} raKategori
+ * @return {string}
+ */
+function normaliserAiKategori(raKategori) {
+  var kategori = typeof raKategori === 'string' ? raKategori.trim() : '';
+  return erGyldigAiKategori(kategori) ? kategori : 'Annet';
+}
+
 // System-prompten AI-en far for hver vurdering (pa norsk, slik spesifisert).
 var AI_SYSTEM_PROMPT =
   'Du vurderer treff i en daglig medieovervåking for Maritime CleanTech ' +
   '(maritime nullutslippsløsninger: hydrogen, ammoniakk, metanol, batteri, ' +
   'vindfremdrift, landstrøm, KI i shipping og prosjektene HyShip, FLAGSHIPS, ' +
-  'Ocean Charger, Orcelle Horizon, TrAM, AIMPERES m.fl.). Vurder ut fra ' +
-  'overskrift og ingress om saken er relevant. Ord som kan bety noe annet ' +
-  '(GASS, TrAM, Apollo, AWESOME, FLAGSHIPS) krever maritim kontekst. Er du ' +
-  'usikker, svar relevant og si det i begrunnelsen. Notat: 1–2 setninger på ' +
-  'norsk om hva saken handler om og hvor søkeordet er nevnt, kun basert på ' +
-  'teksten. Ikke finn på detaljer. Svar bare med JSON: ' +
-  '{"relevant": true/false, "begrunnelse": "...", "notat": "..."}';
+  'Ocean Charger, Orcelle Horizon, TrAM, AIMPERES m.fl.). Du ser KUN ' +
+  'overskrift og ingress, ikke resten av artikkelen - vurder relevans ut ' +
+  'fra denne teksten alene, og påstå ingenting om innhold du ikke kan se. ' +
+  'Ord som kan bety noe annet (GASS, TrAM, Apollo, AWESOME, FLAGSHIPS) ' +
+  'krever maritim kontekst i teksten for å telle som relevant.\n\n' +
+  'Velg nøyaktig én kategori som passer hovedtemaet i saken, fra listen ' +
+  'under. Bruk "Annet" kun hvis ingen av de andre passer:\n' +
+  byggAiKategoriListeForPrompt() + '\n\n' +
+  'Sett "nevner_oss" til true KUN hvis overskriften eller ingressen ' +
+  'navngir Maritime CleanTech, et av deres prosjekter, eller en kjent ' +
+  'samarbeidspartner ved navn. Ellers false.\n\n' +
+  'Notat skal normalt være en tom streng. Skriv kun et notat hvis teksten ' +
+  'gir konkret informasjon som IKKE allerede står i overskrift eller ' +
+  'ingress, eller som krever oppfølging (konkrete tall, beløp, ' +
+  'tidsfrister, vedtak, en konkurrent eller lansering å være obs på). ' +
+  'Bruk ALDRI notatet til å si at saken nevner Maritime CleanTech - det ' +
+  'er det "nevner_oss" er til for. Notatet skal være maks én setning, ' +
+  'maks 20 ord, på norsk. Gjenta ALDRI overskriften. Si ALDRI at saken er ' +
+  '"relevant" eller "direkte relevant", og forklar ALDRI hvorfor den er ' +
+  'relevant.\n\n' +
+  '"irrelevant_grunn" fylles KUN ut når relevant er false: maks 10 ord, ' +
+  'konkret (eksempel: "Naturgass til oppvarming, ikke prosjektet GASS"). ' +
+  'La den stå tom når relevant er true.\n\n' +
+  'Svar KUN med JSON, uten kodeblokk (ingen ```), uten annen tekst før ' +
+  'eller etter: {"relevant": true/false, "kategori": "...", ' +
+  '"nevner_oss": true/false, "notat": "...", "irrelevant_grunn": "..."}';
 
 /**
  * Hovedfunksjonen - kjor denne manuelt fra Apps Script-editoren.
@@ -101,6 +163,8 @@ function runAiTest() {
   var harLoggetRaRespons = false;
   var antallBehandlet = 0;
   var totalKostnadDenneKjoringen = 0;
+  var antallParseFeil = 0;
+  var antallTommeNotater = 0;
   var stoppet = false;
 
   for (var i = 0; i < data.length; i++) {
@@ -147,7 +211,7 @@ function runAiTest() {
       raTekst = respons.getContentText();
     } catch (e) {
       Logger.log('  Nettverksfeil pa rad ' + radnummer + ': ' + e.message);
-      skrivAiResultat(ark, radnummer, 'usikker', '', 'Nettverksfeil: ' + e.message, '', '', '', aiModell);
+      skrivAiResultat(ark, radnummer, 'usikker', '', '', 'Nettverksfeil: ' + e.message, '', '', '', '', aiModell);
       antallBehandlet++;
       continue;
     }
@@ -167,7 +231,7 @@ function runAiTest() {
     var utgiftstakMelding = sjekkForUtgiftstakStopp(httpKode, svarJson);
     if (utgiftstakMelding) {
       Logger.log('STOPPER runAiTest(): ' + utgiftstakMelding);
-      skrivAiResultat(ark, radnummer, 'usikker', '', 'STOPPET: ' + utgiftstakMelding, '', '', '', aiModell);
+      skrivAiResultat(ark, radnummer, 'usikker', '', '', 'STOPPET: ' + utgiftstakMelding, '', '', '', '', aiModell);
       stoppet = true;
       break;
     }
@@ -176,7 +240,7 @@ function runAiTest() {
       var feilmelding = (svarJson && svarJson.error && svarJson.error.message) ?
         svarJson.error.message : raTekst.substring(0, 300);
       Logger.log('  HTTP-feil ' + httpKode + ' pa rad ' + radnummer + ': ' + feilmelding);
-      skrivAiResultat(ark, radnummer, 'usikker', '', 'HTTP-feil ' + httpKode + ': ' + feilmelding, '', '', '', aiModell);
+      skrivAiResultat(ark, radnummer, 'usikker', '', '', 'HTTP-feil ' + httpKode + ': ' + feilmelding, '', '', '', '', aiModell);
       antallBehandlet++;
       continue;
     }
@@ -190,20 +254,21 @@ function runAiTest() {
     }
 
     var tekstBlokk = hentForsteTekstBlokk(svarJson);
-    var tolket = tekstBlokk ? parseAiSvarJson(tekstBlokk) : null;
+    var tolket = tolkAiKategoriseringsSvar(tekstBlokk);
 
-    if (!tolket || typeof tolket.relevant !== 'boolean') {
+    if (tolket.parseFeilet) {
+      antallParseFeil++;
       Logger.log('  Klarte ikke a tolke AI-svaret som forventet JSON pa rad ' + radnummer +
-        ' - setter "usikker". Ra tekst fra Claude: ' + (tekstBlokk || '(tom)'));
-      skrivAiResultat(ark, radnummer, 'usikker',
-        (tolket && tolket.begrunnelse) || '(kunne ikke tolke AI-svar som gyldig JSON)',
-        (tolket && tolket.notat) || '',
-        tokensInn, tokensUt, kostnad, aiModell);
-    } else {
-      skrivAiResultat(ark, radnummer, tolket.relevant ? 'ja' : 'nei',
-        tolket.begrunnelse || '', tolket.notat || '',
-        tokensInn, tokensUt, kostnad, aiModell);
+        ' - behandler som relevant uten kategori (se krav om parse-feil-handtering). ' +
+        'Ra tekst fra Claude: ' + (tekstBlokk || '(tom)'));
     }
+    if (!tolket.notat) {
+      antallTommeNotater++;
+    }
+
+    skrivAiResultat(ark, radnummer, tolket.relevant ? 'ja' : 'nei', tolket.kategori,
+      tolket.nevnerOss, tolket.notat, tolket.irrelevantGrunn,
+      tokensInn, tokensUt, kostnad, aiModell);
 
     antallBehandlet++;
   }
@@ -211,28 +276,33 @@ function runAiTest() {
   var totalTidSekunder = Math.round((new Date().getTime() - startTid) / 1000);
   Logger.log('=== Ferdig. ' + antallBehandlet + ' rad(er) behandlet' +
     (stoppet ? ' (STOPPET fore tiden - se melding over)' : '') +
-    '. Total kostnad denne kjoringen: $' + totalKostnadDenneKjoringen.toFixed(4) +
+    '. Parse-feil: ' + antallParseFeil + '. Tomme notater: ' + antallTommeNotater + ' av ' +
+    antallBehandlet + '. Total kostnad denne kjoringen: $' + totalKostnadDenneKjoringen.toFixed(4) +
     '. Tid brukt: ' + totalTidSekunder + ' sekunder. ===');
 }
 
 /**
- * Skriver resultatkolonnene E-K for en gitt rad.
+ * Skriver resultatkolonnene E-M for en gitt rad.
  *
  * @param {Sheet} ark
  * @param {number} radnummer
  * @param {string} relevant - "ja" / "nei" / "usikker"
- * @param {string} begrunnelse
+ * @param {string} kategori
+ * @param {boolean|string} nevnerOss - true/false, eller "" ved feil/stopp (ikke vurdert)
  * @param {string} notat
+ * @param {string} irrelevantGrunn
  * @param {number|string} tokensInn
  * @param {number|string} tokensUt
  * @param {number|string} kostnad
  * @param {string} modell
  */
-function skrivAiResultat(ark, radnummer, relevant, begrunnelse, notat, tokensInn, tokensUt, kostnad, modell) {
-  ark.getRange(radnummer, 5, 1, 7).setValues([[
+function skrivAiResultat(ark, radnummer, relevant, kategori, nevnerOss, notat, irrelevantGrunn, tokensInn, tokensUt, kostnad, modell) {
+  ark.getRange(radnummer, 5, 1, 9).setValues([[
     relevant,
-    begrunnelse,
+    kategori,
+    nevnerOss === true ? 'ja' : (nevnerOss === false ? 'nei' : ''),
     notat,
+    irrelevantGrunn,
     tokensInn,
     tokensUt,
     (typeof kostnad === 'number') ? kostnad : '',
@@ -316,8 +386,49 @@ function parseAiSvarJson(tekst) {
   try {
     return JSON.parse(renset);
   } catch (e) {
+    // Siste utvei: trekk ut det forste {...}-blokken i teksten (i tilfelle
+    // modellen likevel la til forklarende tekst for/etter selve JSON-en).
+    var treff = renset.match(/\{[\s\S]*\}/);
+    if (treff) {
+      try {
+        return JSON.parse(treff[0]);
+      } catch (e2) {
+        return null;
+      }
+    }
     return null;
   }
+}
+
+/**
+ * Tolker Claudes svartekst til et ensartet resultat. Delt mellom runAiTest()
+ * her og tolkAiRespons() i 10_AIIntegrasjon.gs, slik at begge garantert
+ * tolker AI-svaret pa eksakt samme mate.
+ *
+ * Ved parse-feil (ugyldig/manglende JSON, eller "relevant" som ikke er en
+ * boolean) behandles treffet som relevant=true med tom kategori,
+ * nevnerOss=false og tomt notat - IKKE som en egen "usikker"-tilstand.
+ * parseFeilet=true lar kalleren telle opp antall parse-feil per kjoring.
+ *
+ * @param {string} tekstBlokk - Claudes svartekst (forste tekstblokk)
+ * @return {{relevant:boolean, kategori:string, nevnerOss:boolean,
+ *   notat:string, irrelevantGrunn:string, parseFeilet:boolean}}
+ */
+function tolkAiKategoriseringsSvar(tekstBlokk) {
+  var tolket = tekstBlokk ? parseAiSvarJson(tekstBlokk) : null;
+
+  if (!tolket || typeof tolket.relevant !== 'boolean') {
+    return { relevant: true, kategori: '', nevnerOss: false, notat: '', irrelevantGrunn: '', parseFeilet: true };
+  }
+
+  return {
+    relevant: tolket.relevant,
+    kategori: normaliserAiKategori(tolket.kategori),
+    nevnerOss: tolket.nevner_oss === true,
+    notat: typeof tolket.notat === 'string' ? tolket.notat : '',
+    irrelevantGrunn: typeof tolket.irrelevant_grunn === 'string' ? tolket.irrelevant_grunn : '',
+    parseFeilet: false
+  };
 }
 
 /**

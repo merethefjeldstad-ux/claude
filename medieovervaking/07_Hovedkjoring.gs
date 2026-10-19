@@ -137,7 +137,7 @@ function kjorMedieovervaking() {
   // uventet API-endring, feil i egen kode) skal e-posten ALLTID sendes
   // etterpa, bare uten AI-notat for de(n) som ikke rakk a bli vurdert.
   var alleNyeTreff = samleAlleTreff(treffPerKategori);
-  var aiStatistikk = { antallKall: 0, tokensInn: 0, tokensUt: 0, kostnad: 0, feil: [], stoppetTidlig: false, stoppArsak: '' };
+  var aiStatistikk = { antallKall: 0, tokensInn: 0, tokensUt: 0, kostnad: 0, feil: [], stoppetTidlig: false, stoppArsak: '', antallParseFeil: 0 };
 
   try {
     aiStatistikk = vurderTreffMedAI(alleNyeTreff);

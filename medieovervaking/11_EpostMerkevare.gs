@@ -17,22 +17,16 @@
  * konstantene rett under. Tabellbasert layout med inline CSS + bgcolor-
  * attributter (for best mulig visning i Outlook). Ingen CSS-gradienter,
  * ingen webfonter, ingen JavaScript.
- *
- * MERK (avrundede hjornger pa KI-notat-boksen): border-radius respekteres
- * av Gmail og Apple Mail, men IKKE av Outlook (skrivebord, Word-motoren) -
- * der vises boksen med rette hjorner. Dette er en kjent begrensning i
- * HTML-e-post pa tvers av klienter, ikke noe som kan rettes med ren CSS.
  */
 
 // --- Offisielle Maritime CleanTech-farger (maritimecleantech.no/brand) ---
 var MC_DEEP_BLUE = '#001530';           // overskrifter, tittel
-var MC_DEEP_BLUE_700 = '#314257';       // brodtekst
+var MC_DEEP_BLUE_700 = '#314257';       // brodtekst, AI-notat
 var MC_DEEP_BLUE_500 = '#626F7F';       // dempet tekst (kilde, dato, bunntekst)
-var MC_DEEP_BLUE_200 = '#C4C8CE';       // skillelinjer
+var MC_DEEP_BLUE_200 = '#C4C8CE';       // skillelinjer, AI-notat venstrekant
 var MC_BAKGRUNN_KORT = '#FFFFFF';       // bakgrunn i selve e-posten
 var MC_BAKGRUNN_YTRE = '#E6E9ED';       // bakgrunn bak e-postkortet
-var MC_MINT_BAKGRUNN = '#E9FFF0';       // KI-notat-boks
-var MC_INNOVATION_BLUE = '#0066FF';     // lenker og "Les saken"
+var MC_INNOVATION_BLUE = '#0066FF';     // lenker, "Les saken" og "Nevner oss"
 var MC_IRRELEVANT_BAKGRUNN = '#F5F5F5'; // "Mulig irrelevant"-seksjon
 
 var MC_FONT_STACK = 'Inter, Arial, Helvetica, sans-serif';
@@ -227,8 +221,13 @@ function byggTreffKortHtmlMerkevare(treff, erSiste) {
     ';padding:16px 32px ' + (erSiste ? '20px' : '16px') + ' 32px;font-family:' + MC_FONT_STACK +
     (erSiste ? '' : ';border-bottom:1px solid ' + MC_DEEP_BLUE_200) + ';">';
 
-  html += '<div style="font-size:12px;line-height:16px;color:' + MC_DEEP_BLUE_500 + ';margin:0 0 6px 0;">' +
-    escapeHtml(treff.kilde) + ' · ' + escapeHtml(treff.matchendeOrd.join(', ')) + '</div>';
+  var kildeLinjeDeler = [escapeHtml(treff.kilde), escapeHtml(treff.matchendeOrd.join(', '))];
+  if (treff.aiKategori) kildeLinjeDeler.push(escapeHtml(treff.aiKategori));
+  html += '<div style="font-size:12px;line-height:16px;color:' + MC_DEEP_BLUE_500 + ';margin:0 0 6px 0;">';
+  if (treff.aiNevnerOss) {
+    html += '<span style="font-weight:bold;color:' + MC_INNOVATION_BLUE + ';">Nevner oss</span> · ';
+  }
+  html += kildeLinjeDeler.join(' · ') + '</div>';
 
   html += '<a href="' + escapeAttributt(treff.lenke) + '" style="display:block;font-size:19px;line-height:25px;font-weight:bold;color:' +
     MC_INNOVATION_BLUE + ';text-decoration:none;margin:0 0 6px 0;">' + escapeHtml(treff.tittel) + '</a>';
@@ -239,11 +238,8 @@ function byggTreffKortHtmlMerkevare(treff, erSiste) {
   }
 
   if (treff.aiNotat) {
-    html += '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="' +
-      MC_MINT_BAKGRUNN + '" style="background-color:' + MC_MINT_BAKGRUNN + ';border-radius:8px;margin:0 0 10px 0;">' +
-      '<tr><td style="padding:12px 14px;border-radius:8px;">';
-    html += '<div style="font-size:14px;line-height:20px;color:' + MC_DEEP_BLUE + ';">' + escapeHtml(treff.aiNotat) + '</div>';
-    html += '</td></tr></table>';
+    html += '<div style="font-size:14px;line-height:20px;color:' + MC_DEEP_BLUE_700 + ';border-left:3px solid ' +
+      MC_DEEP_BLUE_200 + ';padding-left:12px;margin:0 0 10px 0;">' + escapeHtml(treff.aiNotat) + '</div>';
   }
 
   html += '<a href="' + escapeAttributt(treff.lenke) + '" style="font-size:14px;line-height:18px;font-weight:bold;color:' +
@@ -255,7 +251,7 @@ function byggTreffKortHtmlMerkevare(treff, erSiste) {
 
 /**
  * Bygger HTML for en kompakt rad i "Mulig irrelevant"-seksjonen, inkludert
- * AI-ens begrunnelse for hvorfor den ble vurdert som trolig irrelevant.
+ * AI-ens korte grunn til at den ble vurdert som trolig irrelevant.
  *
  * @param {Object} treff
  * @param {boolean} erSiste
@@ -268,9 +264,9 @@ function byggIrrelevantRadHtmlMerkevare(treff, erSiste) {
     MC_INNOVATION_BLUE + ';text-decoration:none;margin:0 0 2px 0;">' + escapeHtml(treff.tittel) + '</a>';
   html += '<div style="font-size:12px;line-height:16px;color:' + MC_DEEP_BLUE_500 + ';margin:0 0 4px 0;">' +
     escapeHtml(treff.kilde) + '</div>';
-  if (treff.aiBegrunnelse) {
+  if (treff.aiIrrelevantGrunn) {
     html += '<div style="font-size:12px;line-height:17px;color:' + MC_DEEP_BLUE_500 + ';font-style:italic;">' +
-      escapeHtml(treff.aiBegrunnelse) + '</div>';
+      escapeHtml(treff.aiIrrelevantGrunn) + '</div>';
   }
   html += '</div>';
   return html;
@@ -315,7 +311,10 @@ function byggEpostTekstversjonMerkevare(treffPerKategori, antallOk, totaltAntall
       for (var t = 0; t < treffListe.length; t++) {
         var treff = treffListe[t];
         linjer.push(treff.tittel);
-        linjer.push('Kilde: ' + treff.kilde + ' | Søkeord: ' + treff.matchendeOrd.join(', '));
+        var kildeLinjeTekst = 'Kilde: ' + treff.kilde + ' | Søkeord: ' + treff.matchendeOrd.join(', ');
+        if (treff.aiKategori) kildeLinjeTekst += ' | Kategori: ' + treff.aiKategori;
+        if (treff.aiNevnerOss) kildeLinjeTekst = 'Nevner oss | ' + kildeLinjeTekst;
+        linjer.push(kildeLinjeTekst);
         if (treff.ingress) linjer.push(treff.ingress);
         if (treff.aiNotat) linjer.push('AI-notat: ' + treff.aiNotat);
         linjer.push('Les saken: ' + treff.lenke);
@@ -328,7 +327,7 @@ function byggEpostTekstversjonMerkevare(treffPerKategori, antallOk, totaltAntall
       for (var ir = 0; ir < partisjon.irrelevanteTreff.length; ir++) {
         var irTreff = partisjon.irrelevanteTreff[ir];
         linjer.push(irTreff.tittel + ' (Kilde: ' + irTreff.kilde + ')');
-        if (irTreff.aiBegrunnelse) linjer.push('AI-begrunnelse: ' + irTreff.aiBegrunnelse);
+        if (irTreff.aiIrrelevantGrunn) linjer.push(irTreff.aiIrrelevantGrunn);
         linjer.push(irTreff.lenke);
         linjer.push('');
       }
@@ -417,7 +416,7 @@ function previewEmail() {
   }
 
   var eksempelTreff = {
-    'Fagpresse-maritim': [
+    'Energi og framdrift': [
       {
         tittel: 'Nytt hydrogenprosjekt skal kutte utslipp fra hurtigbåter',
         lenke: 'https://example.no/hydrogen-hurtigbat',
@@ -425,19 +424,23 @@ function previewEmail() {
         kilde: 'Skipsrevyen',
         matchendeOrd: ['hydrogen', 'nullutslipp'],
         aiRelevant: true,
-        aiNotat: 'Saken handler om et konkret hydrogenprosjekt for hurtigbåter - direkte relevant for maritim nullutslippsteknologi.'
+        aiKategori: 'Energi og framdrift',
+        aiNevnerOss: false,
+        aiNotat: 'Pilotprosjektet har en investeringsramme på 80 mill. kr og skal etter planen på vannet i 2026.'
       },
       {
         tittel: 'Ocean Charger-teknologien tas i bruk på ny ferjestrekning',
         lenke: 'https://example.no/ocean-charger-ferje',
-        ingress: 'Hurtigladesystemet Ocean Charger installeres nå på enda en ferjestrekning, og kutter ladetiden til under ti minutter.',
+        ingress: 'Hurtigladesystemet Ocean Charger fra Maritime CleanTech-partner Kongsberg installeres nå på enda en ferjestrekning, og kutter ladetiden til under ti minutter.',
         kilde: 'Energi og Klima',
         matchendeOrd: ['Ocean Charger'],
         aiRelevant: true,
+        aiKategori: 'Energi og framdrift',
+        aiNevnerOss: true,
         aiNotat: ''
       }
     ],
-    'Riksmedia': [
+    'Politikk og regulering': [
       {
         tittel: 'Regjeringen varsler nye krav til utslippsfri skipsfart i fjordene',
         lenke: 'https://example.no/regjeringen-utslippsfri-fjord',
@@ -445,7 +448,9 @@ function previewEmail() {
         kilde: 'Aftenposten',
         matchendeOrd: ['Grønn skipsfart'],
         aiRelevant: true,
-        aiNotat: 'Nasjonal regulering som direkte påvirker rammevilkårene for utslippsfri skipsfart.'
+        aiKategori: 'Politikk og regulering',
+        aiNevnerOss: false,
+        aiNotat: 'Kravet trer i kraft fra 1. januar 2026 og gjelder alle fartøy over 10 000 bruttotonn.'
       },
       {
         tittel: 'Lokalt fotballag henter inn ny spiller fra Apollo IF',
@@ -454,8 +459,10 @@ function previewEmail() {
         kilde: 'Lokalavisen',
         matchendeOrd: ['Apollo'],
         aiRelevant: false,
+        aiKategori: '',
+        aiNevnerOss: false,
         aiNotat: '',
-        aiBegrunnelse: '"Apollo" viser her til et fotballag, ikke noe maritimt prosjekt - ingen maritim kontekst i teksten.'
+        aiIrrelevantGrunn: 'Apollo viser til et fotballag, ikke et maritimt prosjekt.'
       }
     ]
   };

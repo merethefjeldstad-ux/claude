@@ -44,18 +44,23 @@ var FANE_KJORETIDSLOGG = 'Kjøretidslogg';
 /**
  * Vurderer en liste med NYE treff (allerede filtrert mot "Sendte artikler"
  * av kjorMedieovervaking() for denne kalles) med Claude: relevans (true/
- * false) og et kort notat. Muterer HVERT treff-objekt i listen direkte med:
- *   treff.aiRelevant    - true / false / null (null = ikke vurdert)
- *   treff.aiNotat       - string (tom hvis ikke vurdert)
- *   treff.aiBegrunnelse - string (AI-ens begrunnelse for relevansvurderingen,
- *                         tom hvis ikke vurdert - brukt i e-postens "Mulig
- *                         irrelevant"-seksjon, se 11_EpostMerkevare.gs)
+ * false), kategori, om saken nevner oss, og et kort notat. Muterer HVERT
+ * treff-objekt i listen direkte med:
+ *   treff.aiRelevant      - true / false / null (null = ikke vurdert)
+ *   treff.aiKategori      - string, en av AI_KATEGORIER (09_AITest.gs),
+ *                           tom hvis ikke vurdert
+ *   treff.aiNevnerOss     - boolean (true kun hvis overskrift/ingress navngir
+ *                           Maritime CleanTech, et prosjekt eller en partner)
+ *   treff.aiNotat         - string (tom hvis ikke vurdert eller intet a notere)
+ *   treff.aiIrrelevantGrunn - string, satt KUN nar aiRelevant er false - brukt
+ *                           i e-postens "Mulig irrelevant"-seksjon, se
+ *                           11_EpostMerkevare.gs
  *
  * @param {Array<Object>} treffListe - treff-objekter med minst
  *   {tittel, ingress, kilde, lenke}
  * @return {{antallKall:number, tokensInn:number, tokensUt:number,
  *   kostnad:number, feil:Array<string>, stoppetTidlig:boolean,
- *   stoppArsak:string}}
+ *   stoppArsak:string, antallParseFeil:number}}
  */
 function vurderTreffMedAI(treffListe) {
   var statistikk = {
@@ -65,7 +70,8 @@ function vurderTreffMedAI(treffListe) {
     kostnad: 0,
     feil: [],
     stoppetTidlig: false,
-    stoppArsak: ''
+    stoppArsak: '',
+    antallParseFeil: 0
   };
 
   var aiEnabled = PropertiesService.getScriptProperties().getProperty('AI_ENABLED');
@@ -141,9 +147,14 @@ function vurderTreffMedAI(treffListe) {
       }
 
       batch[i].aiRelevant = tolket.relevant;
+      batch[i].aiKategori = tolket.kategori || '';
+      batch[i].aiNevnerOss = tolket.nevnerOss === true;
       batch[i].aiNotat = tolket.notat || '';
-      batch[i].aiBegrunnelse = tolket.begrunnelse || '';
+      batch[i].aiIrrelevantGrunn = tolket.irrelevantGrunn || '';
 
+      if (tolket.parseFeilet) {
+        statistikk.antallParseFeil++;
+      }
       if (tolket.feilmelding) {
         statistikk.feil.push('"' + batch[i].tittel + '": ' + tolket.feilmelding);
       }
@@ -155,7 +166,8 @@ function vurderTreffMedAI(treffListe) {
 
   Logger.log('AI-steget ferdig: ' + statistikk.antallKall + ' kall, ' +
     statistikk.tokensInn + ' tokens inn, ' + statistikk.tokensUt + ' tokens ut, ' +
-    '$' + statistikk.kostnad.toFixed(4) + ' anslatt kostnad.');
+    '$' + statistikk.kostnad.toFixed(4) + ' anslatt kostnad, ' +
+    statistikk.antallParseFeil + ' parse-feil.');
 
   return statistikk;
 }
@@ -198,16 +210,21 @@ function byggAiForesporsel(treff, apiKey, aiModell) {
 
 /**
  * Tolker ett HTTPResponse-objekt fra et AI-kall (bade fra enkeltkall og fra
- * UrlFetchApp.fetchAll()-batcher) til et ensartet resultat. Samme
- * feilhandtering som runAiTest() i 09_AITest.gs: robust JSON-parsing med
- * fallback til "usikker" (relevant: null), og samme sjekk for nadd
- * utgiftstak via sjekkForUtgiftstakStopp().
+ * UrlFetchApp.fetchAll()-batcher) til et ensartet resultat. HTTP-feil og
+ * nadd utgiftstak (sjekkForUtgiftstakStopp()) handteres her, som for -
+ * fortsatt "usikker" (relevant: null) for disse, siden det er en annen
+ * feiltype enn et JSON-parse-problem i selve AI-svaret. Selve innholdet i
+ * et vellykket (HTTP 200) svar tolkes av den delte tolkAiKategoriseringsSvar()
+ * i 09_AITest.gs, som runAiTest() ogsa bruker - garanterer identisk tolkning.
  *
  * @param {HTTPResponse} httpRespons
  * @param {string} aiModell
- * @return {{relevant:(boolean|null), notat:string, tokensInn:(number|undefined),
- *   tokensUt:(number|undefined), kostnad:(number|undefined),
- *   feilmelding:(string|undefined), stoppMelding:(string|undefined)}}
+ * @return {{relevant:(boolean|null), kategori:(string|undefined),
+ *   nevnerOss:(boolean|undefined), notat:string,
+ *   irrelevantGrunn:(string|undefined), parseFeilet:(boolean|undefined),
+ *   tokensInn:(number|undefined), tokensUt:(number|undefined),
+ *   kostnad:(number|undefined), feilmelding:(string|undefined),
+ *   stoppMelding:(string|undefined)}}
  */
 function tolkAiRespons(httpRespons, aiModell) {
   var httpKode = httpRespons.getResponseCode();
@@ -231,27 +248,20 @@ function tolkAiRespons(httpRespons, aiModell) {
   var kostnad = (typeof kostnadVerdi === 'number') ? kostnadVerdi : undefined;
 
   var tekstBlokk = hentForsteTekstBlokk(svarJson);
-  var tolketJson = tekstBlokk ? parseAiSvarJson(tekstBlokk) : null;
-
-  if (!tolketJson || typeof tolketJson.relevant !== 'boolean') {
-    return {
-      relevant: null,
-      notat: '',
-      begrunnelse: '',
-      tokensInn: tokensInn,
-      tokensUt: tokensUt,
-      kostnad: kostnad,
-      feilmelding: 'Klarte ikke a tolke AI-svaret som gyldig JSON.'
-    };
-  }
+  var tolket = tolkAiKategoriseringsSvar(tekstBlokk);
 
   return {
-    relevant: tolketJson.relevant,
-    notat: tolketJson.notat || '',
-    begrunnelse: tolketJson.begrunnelse || '',
+    relevant: tolket.relevant,
+    kategori: tolket.kategori,
+    nevnerOss: tolket.nevnerOss,
+    notat: tolket.notat,
+    irrelevantGrunn: tolket.irrelevantGrunn,
+    parseFeilet: tolket.parseFeilet,
     tokensInn: tokensInn,
     tokensUt: tokensUt,
-    kostnad: kostnad
+    kostnad: kostnad,
+    feilmelding: tolket.parseFeilet ?
+      'Klarte ikke a tolke AI-svaret som gyldig JSON - behandlet som relevant uten kategori.' : undefined
   };
 }
 
