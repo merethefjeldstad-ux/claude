@@ -29,26 +29,48 @@
 // Dette gjelder OGSA nar KI-kallet feiler eller ikke kan tolkes - nevner_oss
 // skal ALDRI ende opp som false/usynlig bare fordi AI-kallet feilet.
 //
+// Hvert element er enten en ren streng (teller alltid, samme substreng-sok
+// som for), eller et objekt {navn, kreverKontekst} for navn som er for
+// upresise alene til a telle som "oss" pa egen hand (f.eks. "Maritime AI
+// Centre" - vi er partner der, men de fleste sakene som nevner senteret
+// (generelle nyheter, masteroppgaver osv.) handler ikke om OSS spesifikt).
+// Da ma minst ett av ordene i kreverKontekst OGSA finnes i samme tekst for
+// at treffet skal telle - samme prinsipp som "kontekstord" for Tier
+// 2-sokeord i 01_Konfigurasjon.gs.
+//
 // Tvetydige navn (FLAGSHIPS, TrAM, Apollo, GASS, AWESOME) er IKKE med her
-// med vilje - de krever kontekst for a vite om de er "oss", og overlates
+// med vilje - de krever kontekst AI-en selv ma vurdere, og overlates
 // derfor til modellens egen vurdering, som i dag.
 // ---------------------------------------------------------------------
 var OUR_NAMES = [
   'Maritime CleanTech', 'HyShip', 'Ocean Charger', 'Orcelle Horizon',
   'AIMPERES', 'FIT-HORIZONS', 'LOWNOISER', 'STEESMAT', 'H2NOR', 'SeaThrive',
-  'Ship-aH2oy', 'Maritime AI Centre', 'CleanFlow Energy network'
+  'Ship-aH2oy', 'CleanFlow Energy network',
+  { navn: 'Maritime AI Centre', kreverKontekst: ['Maritime CleanTech'] }
 ];
 
 /**
  * @param {string} tekst - typisk overskrift + ingress
  * @return {boolean} true hvis et av navnene i OUR_NAMES finnes i teksten
- *   (case-insensitivt substreng-sok)
+ *   (case-insensitivt substreng-sok). For navn med kreverKontekst ma minst
+ *   ett av kontekstordene OGSA finnes i samme tekst.
  */
 function nevnerOssIKode(tekst) {
   if (!tekst) return false;
   var lav = String(tekst).toLowerCase();
   for (var i = 0; i < OUR_NAMES.length; i++) {
-    if (lav.indexOf(OUR_NAMES[i].toLowerCase()) !== -1) return true;
+    var element = OUR_NAMES[i];
+
+    if (typeof element === 'string') {
+      if (lav.indexOf(element.toLowerCase()) !== -1) return true;
+      continue;
+    }
+
+    if (lav.indexOf(element.navn.toLowerCase()) === -1) continue;
+    var kreverKontekst = element.kreverKontekst || [];
+    for (var j = 0; j < kreverKontekst.length; j++) {
+      if (lav.indexOf(kreverKontekst[j].toLowerCase()) !== -1) return true;
+    }
   }
   return false;
 }
