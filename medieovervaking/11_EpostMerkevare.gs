@@ -25,8 +25,8 @@ var MC_DEEP_BLUE_700 = '#314257';       // brodtekst, AI-notat
 var MC_DEEP_BLUE_500 = '#626F7F';       // dempet tekst (kilde, dato, bunntekst)
 var MC_DEEP_BLUE_200 = '#C4C8CE';       // skillelinjer, AI-notat venstrekant
 var MC_BAKGRUNN_KORT = '#FFFFFF';       // bakgrunn i selve e-posten
-var MC_BAKGRUNN_YTRE = '#E6E9ED';       // bakgrunn bak e-postkortet
-var MC_INNOVATION_BLUE = '#0066FF';     // lenker, "Les saken" og "Nevner oss"
+var MC_BAKGRUNN_YTRE = '#F5F5F5';       // bakgrunn bak e-postkortet (Deep Blue 50)
+var MC_INNOVATION_BLUE = '#0066FF';     // "Les saken" og "Nevner oss" (tittel-lenken er MC_DEEP_BLUE)
 var MC_IRRELEVANT_BAKGRUNN = '#F5F5F5'; // "Mulig irrelevant"-seksjon
 
 var MC_FONT_STACK = 'Inter, Arial, Helvetica, sans-serif';
@@ -239,7 +239,7 @@ function byggTreffKortHtmlMerkevare(treff, erSiste) {
   html += kildeLinjeDeler.join(' · ') + '</div>';
 
   html += '<a href="' + escapeAttributt(treff.lenke) + '" style="display:block;font-size:19px;line-height:25px;font-weight:bold;color:' +
-    MC_INNOVATION_BLUE + ';text-decoration:none;margin:0 0 6px 0;">' + escapeHtml(treff.tittel) + '</a>';
+    MC_DEEP_BLUE + ';text-decoration:none;margin:0 0 6px 0;">' + escapeHtml(treff.tittel) + '</a>';
 
   var visningstekst = treff.aiSammendrag || treff.ingress;
   if (visningstekst) {
@@ -253,7 +253,7 @@ function byggTreffKortHtmlMerkevare(treff, erSiste) {
   }
 
   html += '<a href="' + escapeAttributt(treff.lenke) + '" style="font-size:14px;line-height:18px;font-weight:bold;color:' +
-    MC_INNOVATION_BLUE + ';text-decoration:none;">Les saken →</a>';
+    MC_INNOVATION_BLUE + ';text-decoration:underline;">Les saken →</a>';
 
   html += '</td></tr>';
   return html;
