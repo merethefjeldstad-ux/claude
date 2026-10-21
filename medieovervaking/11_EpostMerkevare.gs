@@ -194,10 +194,8 @@ function byggEpostHtmlMerkevare(treffPerKategori, antallOk, totaltAntallKilder, 
     ';padding:20px 32px;font-family:' + MC_FONT_STACK + ';border-top:1px solid ' + MC_DEEP_BLUE_200 + ';">';
   html += '<div style="font-size:12px;line-height:18px;color:' + MC_DEEP_BLUE_500 + ';">';
   html += 'Denne e-posten sendes automatisk hver morgen av medieovervåkingsskriptet. ';
-  if (aiStatistikk && aiStatistikk.antallKall > 0) {
-    html += 'Sammendrag, kategorisering og «Nevner oss»-vurderingen over er generert av kunstig ' +
-      'intelligens (KI) og kan inneholde feil. ';
-  }
+  html += 'Sammendrag, kategorisering og «Nevner oss»-vurderingen over er generert av kunstig ' +
+    'intelligens (KI) og kan inneholde feil. ';
   html += 'Spørsmål? Ta kontakt med ' + escapeHtml(MC_KONTAKTPERSON_NAVN) + ' (<a href="mailto:' +
     escapeAttributt(MC_KONTAKTPERSON_EPOST) + '" style="color:' + MC_INNOVATION_BLUE + ';">' +
     escapeHtml(MC_KONTAKTPERSON_EPOST) + '</a>).';
@@ -353,10 +351,8 @@ function byggEpostTekstversjonMerkevare(treffPerKategori, antallOk, totaltAntall
 
   linjer.push('---');
   linjer.push('Denne e-posten sendes automatisk hver morgen av medieovervåkingsskriptet.');
-  if (aiStatistikk && aiStatistikk.antallKall > 0) {
-    linjer.push('Sammendrag, kategorisering og «Nevner oss»-vurderingen over er generert av ' +
-      'kunstig intelligens (KI) og kan inneholde feil.');
-  }
+  linjer.push('Sammendrag, kategorisering og «Nevner oss»-vurderingen over er generert av ' +
+    'kunstig intelligens (KI) og kan inneholde feil.');
   linjer.push('Spørsmål? Ta kontakt med ' + MC_KONTAKTPERSON_NAVN + ' (' + MC_KONTAKTPERSON_EPOST + ').');
 
   return linjer.join('\n');
