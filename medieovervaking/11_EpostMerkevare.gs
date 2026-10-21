@@ -221,11 +221,14 @@ function byggTreffKortHtmlMerkevare(treff, erSiste) {
     ';padding:16px 32px ' + (erSiste ? '20px' : '16px') + ' 32px;font-family:' + MC_FONT_STACK +
     (erSiste ? '' : ';border-bottom:1px solid ' + MC_DEEP_BLUE_200) + ';">';
 
-  var kildeLinjeDeler = [escapeHtml(treff.kilde), escapeHtml(treff.matchendeOrd.join(', '))];
+  // Kategori vises KUN som kategorioverskriften over kortene (se
+  // byggEpostHtmlMerkevare) - ikke her ogsa, for a unnga at den samme
+  // kategorien gjentas pa hvert enkelt treff. "Ikke KI-vurdert" er et
+  // annet signal (treffet ble ikke vurdert i det hele tatt) og vises
+  // fortsatt, uavhengig av kategori-duplisering.
+  var kildeLinjeDeler = ['Kilde: ' + escapeHtml(treff.kilde), 'Søkeord: ' + escapeHtml(treff.matchendeOrd.join(', '))];
   if (treff.aiParseFeilet) {
     kildeLinjeDeler.push('Ikke KI-vurdert');
-  } else if (treff.aiKategori) {
-    kildeLinjeDeler.push(escapeHtml(treff.aiKategori));
   }
   html += '<div style="font-size:12px;line-height:16px;color:' + MC_DEEP_BLUE_500 + ';margin:0 0 6px 0;">';
   if (treff.aiNevnerOss) {
@@ -316,11 +319,11 @@ function byggEpostTekstversjonMerkevare(treffPerKategori, antallOk, totaltAntall
       for (var t = 0; t < treffListe.length; t++) {
         var treff = treffListe[t];
         linjer.push(treff.tittel);
+        // Kategori vises kun som "== <kategori> =="-overskriften over, ikke
+        // gjentatt her - se tilsvarende kommentar i byggTreffKortHtmlMerkevare.
         var kildeLinjeTekst = 'Kilde: ' + treff.kilde + ' | Søkeord: ' + treff.matchendeOrd.join(', ');
         if (treff.aiParseFeilet) {
           kildeLinjeTekst += ' | Ikke KI-vurdert';
-        } else if (treff.aiKategori) {
-          kildeLinjeTekst += ' | Kategori: ' + treff.aiKategori;
         }
         if (treff.aiNevnerOss) kildeLinjeTekst = 'Nevner oss | ' + kildeLinjeTekst;
         linjer.push(kildeLinjeTekst);
