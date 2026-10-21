@@ -54,6 +54,7 @@ var FANE_KJORETIDSLOGG = 'Kjøretidslogg';
 function anvendTolketResultatPaaTreff(treff, tolket, statistikk) {
   treff.aiRelevant = tolket.relevant;
   treff.aiKategori = tolket.kategori || '';
+  treff.aiSammendrag = tolket.sammendrag || '';
   treff.aiNevnerOss = tolket.nevnerOss === true;
   treff.aiNotat = tolket.notat || '';
   treff.aiIrrelevantGrunn = tolket.irrelevantGrunn || '';
@@ -74,6 +75,10 @@ function anvendTolketResultatPaaTreff(treff, tolket, statistikk) {
  *   treff.aiRelevant      - true / false / null (null = ikke vurdert)
  *   treff.aiKategori      - string, en av AI_KATEGORIER (09_AITest.gs),
  *                           tom hvis ikke vurdert
+ *   treff.aiSammendrag    - string, KI-skrevet sammendrag som erstatter rå
+ *                           RSS-ingress i e-posten, tom hvis ikke vurdert
+ *                           (da brukes rå ingress som fallback, se
+ *                           11_EpostMerkevare.gs)
  *   treff.aiNevnerOss     - boolean (kode-treff i OUR_NAMES ELLER modellens
  *                           svar - se 09_AITest.gs - alltid satt, ogsa ved feil)
  *   treff.aiNotat         - string (tom hvis ikke vurdert eller intet a notere)
@@ -273,7 +278,7 @@ function byggAiForesporsel(treff, apiKey, aiModell) {
 
   var requestBody = {
     model: aiModell,
-    max_tokens: 300,
+    max_tokens: 500,
     system: AI_SYSTEM_PROMPT,
     messages: [
       { role: 'user', content: brukerTekst }
@@ -325,7 +330,7 @@ function tolkAiRespons(httpRespons, aiModell, kildeTekstForNevnerOss) {
   if (utgiftstakMelding) {
     var kodeTreffUtgiftstak = nevnerOssIKode(kildeTekstForNevnerOss);
     return {
-      relevant: null, kategori: '', nevnerOss: kodeTreffUtgiftstak,
+      relevant: null, kategori: '', sammendrag: '', nevnerOss: kodeTreffUtgiftstak,
       nevnerOssKilde: kodeTreffUtgiftstak ? 'kode' : '', notat: '', stoppMelding: utgiftstakMelding
     };
   }
@@ -335,7 +340,7 @@ function tolkAiRespons(httpRespons, aiModell, kildeTekstForNevnerOss) {
       svarJson.error.message : raTekst.substring(0, 300);
     var kodeTreffHttp = nevnerOssIKode(kildeTekstForNevnerOss);
     return {
-      relevant: null, kategori: '', nevnerOss: kodeTreffHttp,
+      relevant: null, kategori: '', sammendrag: '', nevnerOss: kodeTreffHttp,
       nevnerOssKilde: kodeTreffHttp ? 'kode' : '', notat: '',
       feilmelding: 'HTTP-feil ' + httpKode + ': ' + feilmelding
     };
@@ -352,6 +357,7 @@ function tolkAiRespons(httpRespons, aiModell, kildeTekstForNevnerOss) {
   return {
     relevant: tolket.relevant,
     kategori: tolket.kategori,
+    sammendrag: tolket.sammendrag,
     nevnerOss: tolket.nevnerOss,
     nevnerOssKilde: tolket.nevnerOssKilde,
     notat: tolket.notat,

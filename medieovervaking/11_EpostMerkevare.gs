@@ -236,9 +236,10 @@ function byggTreffKortHtmlMerkevare(treff, erSiste) {
   html += '<a href="' + escapeAttributt(treff.lenke) + '" style="display:block;font-size:19px;line-height:25px;font-weight:bold;color:' +
     MC_INNOVATION_BLUE + ';text-decoration:none;margin:0 0 6px 0;">' + escapeHtml(treff.tittel) + '</a>';
 
-  if (treff.ingress) {
+  var visningstekst = treff.aiSammendrag || treff.ingress;
+  if (visningstekst) {
     html += '<div style="font-size:16px;line-height:22px;color:' + MC_DEEP_BLUE_700 + ';margin:0 0 10px 0;">' +
-      escapeHtml(avkortTekst(treff.ingress, 180)) + '</div>';
+      escapeHtml(avkortTekst(visningstekst, 400)) + '</div>';
   }
 
   if (treff.aiNotat) {
@@ -323,7 +324,8 @@ function byggEpostTekstversjonMerkevare(treffPerKategori, antallOk, totaltAntall
         }
         if (treff.aiNevnerOss) kildeLinjeTekst = 'Nevner oss | ' + kildeLinjeTekst;
         linjer.push(kildeLinjeTekst);
-        if (treff.ingress) linjer.push(treff.ingress);
+        var visningstekst = treff.aiSammendrag || treff.ingress;
+        if (visningstekst) linjer.push(visningstekst);
         if (treff.aiNotat) linjer.push('AI-notat: ' + treff.aiNotat);
         linjer.push('Les saken: ' + treff.lenke);
         linjer.push('');
@@ -433,6 +435,7 @@ function previewEmail() {
         matchendeOrd: ['hydrogen', 'nullutslipp'],
         aiRelevant: true,
         aiKategori: 'Energi og framdrift',
+        aiSammendrag: 'Et konsortium av norske verft og redere starter et pilotprosjekt for hydrogendrevne hurtigbåter på Vestlandet. Målet er nullutslipp innen 2028.',
         aiNevnerOss: false,
         aiNotat: 'Pilotprosjektet har en investeringsramme på 80 mill. kr og skal etter planen på vannet i 2026.'
       },
@@ -444,6 +447,7 @@ function previewEmail() {
         matchendeOrd: ['Ocean Charger'],
         aiRelevant: true,
         aiKategori: 'Energi og framdrift',
+        aiSammendrag: 'Hurtigladesystemet Ocean Charger, utviklet sammen med Maritime CleanTech-partner Kongsberg, tas i bruk på enda en ferjestrekning og kutter ladetiden til under ti minutter.',
         aiNevnerOss: true,
         aiNotat: ''
       },
@@ -455,6 +459,7 @@ function previewEmail() {
         matchendeOrd: ['hydrogen'],
         aiRelevant: true,
         aiKategori: '',
+        aiSammendrag: '', // tom - viser at rå ingress brukes som fallback nar AI-svaret ikke kunne tolkes
         aiNevnerOss: true,
         aiNotat: '',
         aiParseFeilet: true

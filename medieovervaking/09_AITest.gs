@@ -10,9 +10,9 @@
  * skriptet oppretter IKKE fanen):
  *   A Overskrift | B Ingress | C Kilde | D Forventet
  * Skriptet skriver til:
- *   E Relevant | F Kategori | G Nevner oss | H Nevner oss - kilde |
- *   I Notat | J Irrelevant grunn | K Rå feil | L Tokens inn | M Tokens ut |
- *   N Kostnad USD | O Modell
+ *   E Relevant | F Kategori | G Sammendrag | H Nevner oss |
+ *   I Nevner oss - kilde | J Notat | K Irrelevant grunn | L Rå feil |
+ *   M Tokens inn | N Tokens ut | O Kostnad USD | P Modell
  *
  * Krever to Script Properties (Prosjektinnstillinger -> Skriptegenskaper):
  *   ANTHROPIC_API_KEY - din Anthropic API-nokkel
@@ -148,7 +148,15 @@ var AI_SYSTEM_PROMPT =
   'Sett "nevner_oss" til true KUN hvis overskriften eller ingressen ' +
   'navngir Maritime CleanTech, et av deres prosjekter, eller en kjent ' +
   'samarbeidspartner ved navn. Ellers false.\n\n' +
-  'Notat skal normalt være en tom streng. Skriv kun et notat hvis teksten ' +
+  '"sammendrag" skal ALLTID fylles ut: en ren gjenfortelling av saken på ' +
+  '2-3 setninger, maks ca. 60 ord, på flytende norsk - oversett fra ' +
+  'engelsk om nødvendig. Basér deg KUN på overskriften og ingressen du har ' +
+  'fått oppgitt over, ikke finn på detaljer som ikke står der. Rydd opp i ' +
+  'eventuelt rot fra kilden (avkuttede setninger, "…", bylines, "Les mer") ' +
+  'slik at sammendraget leser greit som egen tekst. Ikke gjenta ' +
+  'overskriften ordrett.\n\n' +
+  '"sammendrag" og "notat" er to ulike felt - bland dem ikke: notat skal ' +
+  'normalt være en tom streng. Skriv kun et notat hvis teksten ' +
   'gir konkret informasjon som IKKE allerede står i overskrift eller ' +
   'ingress, eller som krever oppfølging (konkrete tall, beløp, ' +
   'tidsfrister, vedtak, en konkurrent eller lansering å være obs på). ' +
@@ -162,7 +170,8 @@ var AI_SYSTEM_PROMPT =
   'La den stå tom når relevant er true.\n\n' +
   'Svar KUN med JSON, uten kodeblokk (ingen ```), uten annen tekst før ' +
   'eller etter: {"relevant": true/false, "kategori": "...", ' +
-  '"nevner_oss": true/false, "notat": "...", "irrelevant_grunn": "..."}';
+  '"nevner_oss": true/false, "sammendrag": "...", "notat": "...", ' +
+  '"irrelevant_grunn": "..."}';
 
 /**
  * Gjor ETT rått HTTP-kall til Claude. Kaster videre ved nettverksfeil
@@ -177,7 +186,7 @@ var AI_SYSTEM_PROMPT =
 function gjorEttKlaudeKall(apiKey, aiModell, brukerTekst) {
   var requestBody = {
     model: aiModell,
-    max_tokens: 300,
+    max_tokens: 500,
     system: AI_SYSTEM_PROMPT,
     messages: [
       { role: 'user', content: brukerTekst }
@@ -354,7 +363,7 @@ function runAiTest() {
     if (forsok.type === 'nettverksfeil') {
       Logger.log('  Nettverksfeil pa rad ' + radnummer + ': ' + forsok.feilmelding);
       var kodeTreffNett = nevnerOssIKode(kildeTekstForNevnerOss);
-      skrivAiResultat(ark, radnummer, 'usikker', '', kodeTreffNett, kodeTreffNett ? 'kode' : '',
+      skrivAiResultat(ark, radnummer, 'usikker', '', '', kodeTreffNett, kodeTreffNett ? 'kode' : '',
         'Nettverksfeil: ' + forsok.feilmelding, '', '', '', '', '', aiModell);
       antallBehandlet++;
       continue;
@@ -363,7 +372,7 @@ function runAiTest() {
     if (forsok.type === 'utgiftstak') {
       Logger.log('STOPPER runAiTest(): ' + forsok.stoppMelding);
       var kodeTreffStopp = nevnerOssIKode(kildeTekstForNevnerOss);
-      skrivAiResultat(ark, radnummer, 'usikker', '', kodeTreffStopp, kodeTreffStopp ? 'kode' : '',
+      skrivAiResultat(ark, radnummer, 'usikker', '', '', kodeTreffStopp, kodeTreffStopp ? 'kode' : '',
         'STOPPET: ' + forsok.stoppMelding, '', '', '', '', '', aiModell);
       stoppet = true;
       break;
@@ -372,7 +381,7 @@ function runAiTest() {
     if (forsok.type === 'http-feil') {
       Logger.log('  ' + forsok.feilmelding + ' (rad ' + radnummer + ')');
       var kodeTreffHttp = nevnerOssIKode(kildeTekstForNevnerOss);
-      skrivAiResultat(ark, radnummer, 'usikker', '', kodeTreffHttp, kodeTreffHttp ? 'kode' : '',
+      skrivAiResultat(ark, radnummer, 'usikker', '', '', kodeTreffHttp, kodeTreffHttp ? 'kode' : '',
         forsok.feilmelding, '', '', '', '', '', aiModell);
       antallBehandlet++;
       continue;
@@ -392,7 +401,7 @@ function runAiTest() {
 
       if (retry.type === 'utgiftstak') {
         Logger.log('STOPPER runAiTest() (under retry): ' + retry.stoppMelding);
-        skrivAiResultat(ark, radnummer, 'usikker', '', tolket.nevnerOss, tolket.nevnerOssKilde,
+        skrivAiResultat(ark, radnummer, 'usikker', '', '', tolket.nevnerOss, tolket.nevnerOssKilde,
           'STOPPET (retry): ' + retry.stoppMelding, '', raFeilTekst, tokensInn, tokensUt, kostnad, aiModell);
         stoppet = true;
         break;
@@ -421,7 +430,7 @@ function runAiTest() {
       antallTommeNotater++;
     }
 
-    skrivAiResultat(ark, radnummer, tolket.relevant ? 'ja' : 'nei', tolket.kategori,
+    skrivAiResultat(ark, radnummer, tolket.relevant ? 'ja' : 'nei', tolket.kategori, tolket.sammendrag,
       tolket.nevnerOss, tolket.nevnerOssKilde, tolket.notat, tolket.irrelevantGrunn, raFeilTekst,
       tokensInn, tokensUt, kostnad, aiModell);
 
@@ -437,12 +446,13 @@ function runAiTest() {
 }
 
 /**
- * Skriver resultatkolonnene E-O for en gitt rad.
+ * Skriver resultatkolonnene E-P for en gitt rad.
  *
  * @param {Sheet} ark
  * @param {number} radnummer
  * @param {string} relevant - "ja" / "nei" / "usikker"
  * @param {string} kategori
+ * @param {string} sammendrag
  * @param {boolean|string} nevnerOss - true/false, eller "" ved feil/stopp (ikke vurdert)
  * @param {string} nevnerOssKilde - "kode" / "modell" / "begge" / ""
  * @param {string} notat
@@ -453,10 +463,11 @@ function runAiTest() {
  * @param {number|string} kostnad
  * @param {string} modell
  */
-function skrivAiResultat(ark, radnummer, relevant, kategori, nevnerOss, nevnerOssKilde, notat, irrelevantGrunn, raFeil, tokensInn, tokensUt, kostnad, modell) {
-  ark.getRange(radnummer, 5, 1, 11).setValues([[
+function skrivAiResultat(ark, radnummer, relevant, kategori, sammendrag, nevnerOss, nevnerOssKilde, notat, irrelevantGrunn, raFeil, tokensInn, tokensUt, kostnad, modell) {
+  ark.getRange(radnummer, 5, 1, 12).setValues([[
     relevant,
     kategori,
+    sammendrag || '',
     nevnerOss === true ? 'ja' : (nevnerOss === false ? 'nei' : ''),
     nevnerOssKilde || '',
     notat,
@@ -576,9 +587,9 @@ function parseAiSvarJson(tekst) {
  * @param {string} tekstBlokk - Claudes svartekst (forste tekstblokk)
  * @param {string} kildeTekstForNevnerOss - overskrift+ingress, brukt til
  *   kode-basert nevnerOss-sjekk (nevnerOssIKode())
- * @return {{relevant:boolean, kategori:string, nevnerOss:boolean,
- *   nevnerOssKilde:string, notat:string, irrelevantGrunn:string,
- *   parseFeilet:boolean}}
+ * @return {{relevant:boolean, kategori:string, sammendrag:string,
+ *   nevnerOss:boolean, nevnerOssKilde:string, notat:string,
+ *   irrelevantGrunn:string, parseFeilet:boolean}}
  */
 function tolkAiKategoriseringsSvar(tekstBlokk, kildeTekstForNevnerOss) {
   var tolket = tekstBlokk ? parseAiSvarJson(tekstBlokk) : null;
@@ -588,6 +599,7 @@ function tolkAiKategoriseringsSvar(tekstBlokk, kildeTekstForNevnerOss) {
     return {
       relevant: true,
       kategori: '',
+      sammendrag: '',
       nevnerOss: kodeTreff,
       nevnerOssKilde: kodeTreff ? 'kode' : '',
       notat: '',
@@ -605,6 +617,7 @@ function tolkAiKategoriseringsSvar(tekstBlokk, kildeTekstForNevnerOss) {
   return {
     relevant: tolket.relevant,
     kategori: normaliserAiKategori(tolket.kategori),
+    sammendrag: typeof tolket.sammendrag === 'string' ? tolket.sammendrag : '',
     nevnerOss: kodeTreff || modellNevnerOss,
     nevnerOssKilde: nevnerOssKilde,
     notat: typeof tolket.notat === 'string' ? tolket.notat : '',
