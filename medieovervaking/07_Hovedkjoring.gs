@@ -48,7 +48,7 @@ function kjorMedieovervaking() {
     return;
   }
 
-  var treffPerKategori = {};   // kategori -> liste med treffobjekter
+  var treffPerKategori = {};   // sokeord-kategori (kolonne D i "Sokeord") -> liste med treffobjekter
   var antallOk = 0;
   var antallFeilet = 0;
   var feilendeKilderNavn = [];
@@ -106,10 +106,16 @@ function kjorMedieovervaking() {
 
       treffTeller++;
 
-      if (!treffPerKategori[kilde.kategori]) {
-        treffPerKategori[kilde.kategori] = [];
+      // Gruppert pa sokeord-kategori (kolonne D i "Sokeord"), ikke
+      // kilde-kategori - se finnKategoriForForsteSokeord() i 04_Filtrering.gs.
+      // Matcher treffet flere sokeord, avgjor det FORSTE matchende sokeordet
+      // hvilken kategori det havner under.
+      var sokeordKategori = finnKategoriForForsteSokeord(matchendeOrd, sokeordListe);
+
+      if (!treffPerKategori[sokeordKategori]) {
+        treffPerKategori[sokeordKategori] = [];
       }
-      treffPerKategori[kilde.kategori].push({
+      treffPerKategori[sokeordKategori].push({
         tittel: artikkel.tittel,
         lenke: artikkel.lenke,
         ingress: artikkel.ingress,

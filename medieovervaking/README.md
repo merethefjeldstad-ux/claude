@@ -74,19 +74,20 @@ Fyll inn én rad per kilde du vil overvåke:
 | Eksempel Avis | https://example.no/rss | Riksmedia |
 
 - Bruk kategoriene du selv ønsker, f.eks. «Riksmedia», «Amedia»,
-  «Fagpresse-maritim», «Fagpresse-tek», «Fagpresse-klima» – e-posten
-  grupperer treff etter denne kolonnen.
+  «Fagpresse-maritim», «Fagpresse-tek», «Fagpresse-klima» – rent for egen
+  oversikt. **E-posten grupperer IKKE lenger treff etter denne kolonnen**
+  – se «Fanen «Søkeord»» under for hvordan gruppering fungerer nå.
 - Kolonnene `Status`, `Sist verifisert` og `Antall treff siste kjøring`
   fylles automatisk av skriptet – la dem stå tomme.
 
 ### Fanen «Søkeord»
 Fyll inn ett søkeord per rad:
 
-| Søkeord | Tier | Kontekstord |
-|---------|------|-------------|
-| Maritime CleanTech | 1 | |
-| hydrogen | 1 | |
-| Apollo | 2 | skip,shipping,maritim,rederi |
+| Søkeord | Tier | Kontekstord | Kategori |
+|---------|------|-------------|----------|
+| Maritime CleanTech | 1 | | Energi og framdrift |
+| hydrogen | 1 | | Energi og framdrift |
+| Apollo | 2 | skip,shipping,maritim,rederi | Annet |
 
 - **Tier 1**: ord som er tydelige nok i seg selv til alltid å telle som
   treff (f.eks. «Maritime CleanTech», «hydrogenskip»).
@@ -94,6 +95,13 @@ Fyll inn ett søkeord per rad:
   «GASS», «AWESOME»). Disse krever at minst ett av kontekstordene i samme
   rad (kommaseparert i kolonne C) også finnes i teksten, ellers telles
   det ikke som treff.
+- **Kategori** (kolonne D): styrer hvilken gruppe/overskrift treffet vises
+  under i e-posten. Flere søkeord kan dele samme kategori – du bestemmer
+  selv hvor mange/få kategorier dere vil ha. Tom celle blir
+  «Ukategorisert». Matcher en artikkel flere søkeord samtidig, er det
+  kategorien til det FØRSTE matchende søkeordet (samme rekkefølge som i
+  dette arket) som avgjør hvilken gruppe artikkelen havner i – den vises
+  aldri i flere grupper samtidig.
 
 ### Fanen «Mottakere»
 Fyll inn én e-postadresse per rad, i kolonne A.

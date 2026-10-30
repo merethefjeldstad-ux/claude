@@ -55,3 +55,30 @@ function finnMatchendeSokeord(tekst, sokeordListe) {
 
   return treff;
 }
+
+/**
+ * Finner kategorien til det FORSTE sokeordet i en liste med matchende
+ * sokeord (fra finnMatchendeSokeord()). Brukes til a gruppere treff i
+ * e-posten etter sokeord-kategori i stedet for kilde-kategori - se
+ * 07_Hovedkjoring.gs. Et treff som matcher flere sokeord grupperes KUN
+ * under det forste matchende sokeordets kategori (samme rekkefolge som
+ * i "Sokeord"-fanen), slik at hvert treff vises nokjaktig en gang i
+ * e-posten - aldri duplisert pa tvers av kategorier.
+ *
+ * @param {Array<string>} matchendeOrd - fra finnMatchendeSokeord()
+ * @param {Array<Object>} sokeordListe - fra hentSokeord()
+ * @return {string} kategorien til forste matchende sokeord, eller
+ *   "Ukategorisert" hvis sokeordet mangler kategori eller (uventet)
+ *   ikke finnes i sokeordListe
+ */
+function finnKategoriForForsteSokeord(matchendeOrd, sokeordListe) {
+  if (!matchendeOrd || matchendeOrd.length === 0) return 'Ukategorisert';
+
+  var forsteSokeord = matchendeOrd[0];
+  for (var i = 0; i < sokeordListe.length; i++) {
+    if (sokeordListe[i].sokeord === forsteSokeord) {
+      return sokeordListe[i].kategori || 'Ukategorisert';
+    }
+  }
+  return 'Ukategorisert';
+}

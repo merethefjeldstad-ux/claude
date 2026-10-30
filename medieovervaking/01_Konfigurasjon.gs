@@ -33,7 +33,8 @@ var KILDER_KOLONNER = {
 var SOKEORD_KOLONNER = {
   SOKEORD: 1,
   TIER: 2,
-  KONTEKSTORD: 3
+  KONTEKSTORD: 3,
+  KATEGORI: 4
 };
 
 var MOTTAKERE_KOLONNER = {
@@ -106,9 +107,12 @@ function hentKilder(ss) {
 /**
  * Leser inn alle sokeord fra "Sokeord"-fanen.
  * Kontekstord (kun brukt for Tier 2) splittes pa komma til en liste.
+ * Kategori (kolonne D) brukes til a gruppere treff i e-posten - se
+ * finnKategoriForForsteSokeord() i 04_Filtrering.gs og 07_Hovedkjoring.gs.
+ * Tom kategori-celle gir "Ukategorisert", samme fallback som for kilder.
  *
  * @param {Spreadsheet} ss - det aktive regnearket
- * @return {Array<Object>} liste med {sokeord, tier, kontekstord[]}
+ * @return {Array<Object>} liste med {sokeord, tier, kontekstord[], kategori}
  */
 function hentSokeord(ss) {
   var ark = ss.getSheetByName(FANE_SOKEORD);
@@ -116,7 +120,7 @@ function hentSokeord(ss) {
   var sokeord = [];
   if (sisteRad < 2) return sokeord;
 
-  var data = ark.getRange(2, 1, sisteRad - 1, 3).getValues();
+  var data = ark.getRange(2, 1, sisteRad - 1, 4).getValues();
   for (var i = 0; i < data.length; i++) {
     var rad = data[i];
     var ord = rad[SOKEORD_KOLONNER.SOKEORD - 1];
@@ -135,7 +139,8 @@ function hentSokeord(ss) {
     sokeord.push({
       sokeord: String(ord).trim(),
       tier: tier,
-      kontekstord: kontekstord
+      kontekstord: kontekstord,
+      kategori: String(rad[SOKEORD_KOLONNER.KATEGORI - 1] || 'Ukategorisert').trim()
     });
   }
   return sokeord;

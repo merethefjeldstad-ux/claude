@@ -22,7 +22,7 @@ function forsteGangsOppsett() {
     ['Navn', 'RSS-URL', 'Kategori', 'Status', 'Sist verifisert', 'Antall treff siste kjøring']);
 
   opprettFaneHvisManglende(ss, FANE_SOKEORD,
-    ['Søkeord', 'Tier', 'Kontekstord']);
+    ['Søkeord', 'Tier', 'Kontekstord', 'Kategori']);
 
   opprettFaneHvisManglende(ss, FANE_MOTTAKERE,
     ['E-post']);
