@@ -283,3 +283,77 @@ function sikkerDecodeURIComponent(verdi) {
     return verdi;
   }
 }
+
+/**
+ * Trygg, isolert test av loggArtikler() - bruker FIKTIVE eksempeltreff
+ * (ingen ekte RSS-henting), og rorer ALDRI "Sendte artikler", AI-kreditter
+ * eller e-postutsendingen. Skriver EKTE rader til "Artikkellogg" i dette
+ * arket (trygt - ingen annen funksjon leser fra denne fanen).
+ *
+ * Kjor denne manuelt fra Apps Script-editoren (velg "testArtikkellogg" i
+ * nedtrekksmenyen og trykk "Kjor") for a teste selve loggingslogikken -
+ * fane-/kolonneoppretting, URL-normalisering (inkl. Google-omdirigering og
+ * utm-/fbclid-fjerning) og alle fire KI-vurderinger (Relevant/Ikke
+ * relevant/Tvil/Ikke vurdert) - uten a kjore hele kjorMedieovervaking().
+ *
+ * Testradene er merket med "[TEST]" i overskrift/kilde, slik at de er
+ * lette a kjenne igjen og slette manuelt fra "Artikkellogg" etterpa.
+ */
+function testArtikkellogg() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  var eksempelTreff = [
+    {
+      tittel: '[TEST] Nytt hydrogenprosjekt skal kutte utslipp',
+      lenke: 'https://www.google.com/url?rct=j&sa=t&url=https%3A%2F%2Fwww.tu.no%2Fartikler%2Ftest-sak%3Futm_source%3Dnewsletter&ct=2&cd=1&usg=AOvVaw0',
+      kilde: '[TEST] Skipsrevyen',
+      matchendeOrd: ['hydrogen', 'nullutslipp'],
+      aiRelevant: true,
+      aiNevnerOss: false,
+      aiNotat: 'Testnotat - sjekker at kort begrunnelse fylles riktig fra notat.',
+      aiIrrelevantGrunn: ''
+    },
+    {
+      tittel: '[TEST] Lokalt fotballag henter Apollo-spiller',
+      lenke: 'https://example.no/fotball-test?fbclid=abc123',
+      kilde: '[TEST] Lokalavisen',
+      matchendeOrd: ['Apollo'],
+      aiRelevant: false,
+      aiNevnerOss: false,
+      aiNotat: '',
+      aiIrrelevantGrunn: 'Fotballag, ikke maritimt prosjekt.'
+    },
+    {
+      tittel: '[TEST] Artikkel der KI-svaret ikke kunne tolkes',
+      lenke: 'https://example.no/parse-feil-test',
+      kilde: '[TEST] TU',
+      matchendeOrd: ['Maritime CleanTech'],
+      aiRelevant: true, // parse-feil-fallback setter alltid relevant=true
+      aiNevnerOss: true,
+      aiNotat: '',
+      aiIrrelevantGrunn: '',
+      aiParseFeilet: true
+    },
+    {
+      tittel: '[TEST] Artikkel som aldri ble AI-vurdert',
+      lenke: 'https://example.no/ikke-vurdert-test',
+      kilde: '[TEST] DN',
+      matchendeOrd: ['ammoniakk'],
+      aiRelevant: null,
+      aiNevnerOss: false,
+      aiNotat: '',
+      aiIrrelevantGrunn: ''
+    }
+  ];
+
+  Logger.log('=== testArtikkellogg(): skriver ' + eksempelTreff.length + ' fiktive testrader til "' +
+    FANE_ARTIKKELLOGG + '" ===');
+  Logger.log('Rorer IKKE "Sendte artikler". Sender INGEN e-post. Bruker INGEN AI-kreditter.');
+
+  loggArtikler(ss, eksempelTreff);
+
+  Logger.log('Ferdig. Sjekk fanen "' + FANE_ARTIKKELLOGG + '" - du bor se ' + eksempelTreff.length +
+    ' nye rader merket med "[TEST]" i overskrift/kilde (lette a finne og slette manuelt etterpa). ' +
+    'Sjekk spesielt: kolonne "Normalisert URL" (Google-omdirigering/utm/fbclid skal vaere fjernet) ' +
+    'og kolonne "KI-vurdering" (skal vise Relevant, Ikke relevant, Tvil og Ikke vurdert - én av hver).');
+}
