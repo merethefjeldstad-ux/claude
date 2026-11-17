@@ -397,6 +397,12 @@ function samleAlleTreff(treffPerKategori) {
  * AI-feil - siden dette er det ene stedet i regnearket som samler
  * "noe gikk galt denne kjoringen, men e-posten ble sendt likevel".
  *
+ * Steg C: Modell-ID og Promptversjon er lagt til som kolonne G/H (til
+ * HOYRE for de eksisterende A-F, som er uendret). Begge star tomme hvis
+ * AI faktisk ikke ble kalt denne kjoringen (statistikk.antallKall === 0 -
+ * AI av, eller feilet for forste kall), for a unnga a antyde at en modell
+ * ble brukt nar den ikke ble det.
+ *
  * @param {Spreadsheet} ss
  * @param {Object} statistikk - se vurderTreffMedAI(). .feil kan inneholde
  *   bade AI-, logo- og e-postmal-feilmeldinger, slatt sammen av kalleren.
@@ -405,19 +411,42 @@ function loggAiKjoretid(ss, statistikk) {
   var ark = ss.getSheetByName(FANE_KJORETIDSLOGG);
   if (!ark) {
     ark = ss.insertSheet(FANE_KJORETIDSLOGG);
-    var overskrifter = ['Tidspunkt', 'Antall kall', 'Tokens inn', 'Tokens ut', 'Anslått kostnad USD', 'Feil'];
+    var overskrifter = ['Tidspunkt', 'Antall kall', 'Tokens inn', 'Tokens ut', 'Anslått kostnad USD', 'Feil', 'Modell-ID', 'Promptversjon'];
     ark.getRange(1, 1, 1, overskrifter.length).setValues([overskrifter]);
     ark.getRange(1, 1, 1, overskrifter.length).setFontWeight('bold');
     ark.setFrozenRows(1);
   }
+  sikreKjoretidsloggKolonner(ark);
 
   var feilTekst = statistikk.feil.length > 0 ? statistikk.feil.join(' | ') : '';
+  var aiModell = statistikk.antallKall > 0 ? (PropertiesService.getScriptProperties().getProperty('AI_MODEL') || '') : '';
+  var promptversjon = statistikk.antallKall > 0 ? PROMPT_VERSION : '';
+
   ark.appendRow([
     new Date(),
     statistikk.antallKall,
     statistikk.tokensInn,
     statistikk.tokensUt,
     Math.round(statistikk.kostnad * 1000000) / 1000000,
-    feilTekst
+    feilTekst,
+    aiModell,
+    promptversjon
   ]);
+}
+
+/**
+ * Sikrer at "Kjøretidslogg" har de 8 kolonnene (inkl. Modell-ID/
+ * Promptversjon lagt til i Steg C). Eldre ark som kun hadde de 6 forste
+ * kolonnene far de to nye overskriftene lagt til automatisk til HOYRE -
+ * ingen manuell oppdatering av eksisterende ark er nodvendig, samme
+ * monster som sikreSendteArtiklerKolonner() i 05_Deduplisering.gs.
+ *
+ * @param {Sheet} ark
+ */
+function sikreKjoretidsloggKolonner(ark) {
+  if (ark.getLastColumn() >= 8) return;
+
+  var nyeOverskrifter = ['Modell-ID', 'Promptversjon'];
+  ark.getRange(1, 7, 1, nyeOverskrifter.length).setValues([nyeOverskrifter]);
+  ark.getRange(1, 7, 1, nyeOverskrifter.length).setFontWeight('bold');
 }
