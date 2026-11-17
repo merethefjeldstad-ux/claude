@@ -132,6 +132,13 @@ function normaliserAiKategori(raKategori) {
   return erGyldigAiKategori(kategori) ? kategori : 'Annet';
 }
 
+// Bump denne MANUELT hver gang AI_SYSTEM_PROMPT under endres pa en mate som
+// kan pavirke resultatene (ikke for rene kommentar-/formateringsendringer).
+// Skrives til "Artikkellogg" (12_Artikkellogg.gs) og "Kjøringsresultat"
+// (Steg D) for hver rad, slik at man i ettertid kan se hvilken
+// promptversjon som ga hvilket resultat.
+var PROMPT_VERSION = 1;
+
 // System-prompten AI-en far for hver vurdering (pa norsk, slik spesifisert).
 var AI_SYSTEM_PROMPT =
   'Du vurderer treff i en daglig medieovervåking for Maritime CleanTech ' +

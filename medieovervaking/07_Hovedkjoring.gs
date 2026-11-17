@@ -192,6 +192,17 @@ function kjorMedieovervaking() {
   if (alleNyeTreff.length > 0) {
     Logger.log('Registrerer ' + alleNyeTreff.length + ' nye artikkel-URL-er (inkl. AI-vurdering) i "' + FANE_SENDTE_ARTIKLER + '".');
     leggTilSendteUrler(ss, alleNyeTreff);
+
+    // Steg B: artikkellogg (12_Artikkellogg.gs) - ren logging for
+    // etterprøvbarhet, endrer ALDRI utsendingen. Egen try/catch slik at en
+    // feil her aldri kan ramme "Sendte artikler" (allerede skrevet over)
+    // eller noe annet i kjoringen.
+    try {
+      loggArtikler(ss, alleNyeTreff);
+    } catch (e) {
+      Logger.log('Uventet feil ved skriving til "' + FANE_ARTIKKELLOGG + '" (pavirker IKKE e-postutsendingen eller "' +
+        FANE_SENDTE_ARTIKLER + '", som allerede er fullfort): ' + e.message);
+    }
   }
 
   var totalTidSekunder = Math.round((new Date().getTime() - startTid) / 1000);
