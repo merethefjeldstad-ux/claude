@@ -20,6 +20,53 @@
 // artikler for å holde API-kostnad og -tid forutsigbar.
 var TEKSTGRUNNLAG_MAKS_TEGN = 6000;
 
+// ---------------------------------------------------------------------
+// Domener det er avklart (sjekket vilkår for) å hente hele siden fra, til
+// bruk i BÅDE 15_TekstgrunnlagTest.gs (Steg E2) og den daglige kjøringen
+// (10_AIIntegrasjon.gs, Steg E3). TOM SOM STANDARD - fyll inn etter at
+// vilkårene er sjekket. Kilder IKKE i denne listen bruker alltid ingress,
+// uansett TEKSTGRUNNLAG_MODUS/SKYGGE_TEKSTGRUNNLAG (se 10_AIIntegrasjon.gs).
+// Eksempel: ['tu.no', 'dn.no'] - subdomener matcher ogsa, se erDomeneIListe().
+// ---------------------------------------------------------------------
+var KILDER_MED_HELSIDE = [];
+
+// Samme nettleser-lignende User-Agent som 03_RSSHenting.gs bruker for
+// RSS-henting - enkelte nettsteder svarer annerledes uten den. Delt mellom
+// 15_TekstgrunnlagTest.gs og 10_AIIntegrasjon.gs.
+var TEKSTGRUNNLAG_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+/**
+ * Trekker ut domenet (uten "www.") fra en URL, i små bokstaver.
+ *
+ * @param {string} url
+ * @return {string}
+ */
+function hentDomeneFraUrl(url) {
+  var treff = String(url || '').match(/^https?:\/\/([^\/]+)/i);
+  if (!treff) return '';
+  return treff[1].replace(/^www\./i, '').toLowerCase();
+}
+
+/**
+ * Sjekker om URL-ens domene (eller et underdomene av det) finnes i
+ * domeneListe.
+ *
+ * @param {string} url
+ * @param {Array<string>} domeneListe
+ * @return {boolean}
+ */
+function erDomeneIListe(url, domeneListe) {
+  var domene = hentDomeneFraUrl(url);
+  if (!domene) return false;
+
+  for (var i = 0; i < domeneListe.length; i++) {
+    var sammenlign = String(domeneListe[i]).replace(/^www\./i, '').toLowerCase();
+    if (domene === sammenlign || domene.indexOf('.' + sammenlign) !== -1) return true;
+  }
+  return false;
+}
+
 // Nøkkelord (i HTML/tekst, små bokstaver) som indikerer en betalingsmur.
 // Heuristisk, ikke garantert komplett - utvid gjerne listen ved behov.
 var BETALINGSMUR_NOKKELORD = [

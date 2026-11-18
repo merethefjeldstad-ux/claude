@@ -5,23 +5,16 @@
  * B "hel side", C "ingress + søkeordkontekst") mot samme prompt og modell
  * som produksjonen. Bruker funksjonene fra 14_Tekstgrunnlag.gs
  * (extractMainContent, extractKeywordContext, validateSummary,
- * byggBrukerTekstMedUtvidetTekstgrunnlag) - fortsatt INGEN endring i den
- * daglige kjøringen. runTekstgrunnlagTest() sender ALDRI e-post, skriver
- * ALDRI til "Sendte artikler" eller "Artikkellogg".
+ * byggBrukerTekstMedUtvidetTekstgrunnlag, KILDER_MED_HELSIDE,
+ * TEKSTGRUNNLAG_USER_AGENT, hentDomeneFraUrl, erDomeneIListe - delt med
+ * 10_AIIntegrasjon.gs/Steg E3) - fortsatt INGEN endring i den daglige
+ * kjøringen fra DENNE filen. runTekstgrunnlagTest() sender ALDRI e-post,
+ * skriver ALDRI til "Sendte artikler" eller "Artikkellogg".
  */
 
 // Fanenavn
 var FANE_REFERANSESETT_HELSIDE = 'Referansesett hel side';
 var FANE_TEKSTGRUNNLAG_TEST = 'Tekstgrunnlag-test';
-
-// ---------------------------------------------------------------------
-// Domener det er avklart (sjekket vilkår for) å hente hele siden fra, for
-// variant B/C. TOM SOM STANDARD - fyll inn etter at vilkårene er sjekket.
-// Artikler fra kilder IKKE i denne listen får kun variant A (ingress).
-// Eksempel: ['tu.no', 'dn.no'] - subdomener (f.eks. "www.tu.no") matcher
-// ogsa automatisk, se erDomeneIListe().
-// ---------------------------------------------------------------------
-var KILDER_MED_HELSIDE = [];
 
 // Maks antall ARTIKLER (ikke varianter - hver artikkel kan gi opptil 3
 // AI-kall) behandlet per kall til runTekstgrunnlagTest(). "maks"-
@@ -36,11 +29,6 @@ var TEKSTGRUNNLAG_TEST_TIDSBUDSJETT_MS = 4.5 * 60 * 1000;
 // B/C-kildene) og selve AI-kallene.
 var TEKSTGRUNNLAG_TEST_SIDEHENTING_BATCH = 5;
 var TEKSTGRUNNLAG_TEST_AI_BATCH = 5;
-
-// Samme nettleser-lignende User-Agent som 03_RSSHenting.gs bruker for
-// RSS-henting - enkelte nettsteder svarer annerledes uten den.
-var TEKSTGRUNNLAG_TEST_USER_AGENT =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 var TEKSTGRUNNLAG_TEST_OVERSKRIFTER = [
   'Kjøring-ID', 'Artikkel-ID', 'Variant', 'Vurdering', 'Kategori', 'Nevner oss',
@@ -168,7 +156,7 @@ function runTekstgrunnlagTest(kjoringId, maks) {
       return {
         url: r.rad[2],
         method: 'get',
-        headers: { 'User-Agent': TEKSTGRUNNLAG_TEST_USER_AGENT },
+        headers: { 'User-Agent': TEKSTGRUNNLAG_USER_AGENT },
         muteHttpExceptions: true,
         followRedirects: true
       };
@@ -346,36 +334,8 @@ function hentAlleredeBehandledeVarianter(ss, kjoringId) {
   return behandlet;
 }
 
-/**
- * Trekker ut domenet (uten "www.") fra en URL, i små bokstaver.
- *
- * @param {string} url
- * @return {string}
- */
-function hentDomeneFraUrl(url) {
-  var treff = String(url || '').match(/^https?:\/\/([^\/]+)/i);
-  if (!treff) return '';
-  return treff[1].replace(/^www\./i, '').toLowerCase();
-}
-
-/**
- * Sjekker om URL-ens domene (eller et underdomene av det) finnes i
- * domeneListe.
- *
- * @param {string} url
- * @param {Array<string>} domeneListe
- * @return {boolean}
- */
-function erDomeneIListe(url, domeneListe) {
-  var domene = hentDomeneFraUrl(url);
-  if (!domene) return false;
-
-  for (var i = 0; i < domeneListe.length; i++) {
-    var sammenlign = String(domeneListe[i]).replace(/^www\./i, '').toLowerCase();
-    if (domene === sammenlign || domene.indexOf('.' + sammenlign) !== -1) return true;
-  }
-  return false;
-}
+// hentDomeneFraUrl() og erDomeneIListe() flyttet til 14_Tekstgrunnlag.gs i
+// Steg E3 - delt med 10_AIIntegrasjon.gs. Samme funksjoner, samme oppforsel.
 
 /**
  * Kostnadsanslag for ETT AI-kall gitt en anslått tegnlengde pa input.

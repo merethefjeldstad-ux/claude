@@ -35,7 +35,9 @@ var LOGG_DAGER = 90;
 var ARTIKKELLOGG_OVERSKRIFTER = [
   'Tidspunkt', 'Normalisert URL', 'Kilde', 'Søkeord', 'Overskrift',
   'Modell-ID', 'Promptversjon', 'Tekstgrunnlag', 'KI-vurdering',
-  'Nevner oss', 'Sendt', 'Utsendingsdato', 'Kort begrunnelse'
+  'Nevner oss', 'Sendt', 'Utsendingsdato', 'Kort begrunnelse',
+  'Skygge-vurdering', 'Skygge-tekstgrunnlag', 'Skygge-validering',
+  'Skygge tokens inn', 'Skygge tokens ut'
 ];
 
 var ARTIKKELLOGG_KOLONNER = {
@@ -51,7 +53,12 @@ var ARTIKKELLOGG_KOLONNER = {
   NEVNER_OSS: 10,
   SENDT: 11,
   UTSENDINGSDATO: 12,
-  KORT_BEGRUNNELSE: 13
+  KORT_BEGRUNNELSE: 13,
+  SKYGGE_VURDERING: 14,
+  SKYGGE_TEKSTGRUNNLAG: 15,
+  SKYGGE_VALIDERING: 16,
+  SKYGGE_TOKENS_INN: 17,
+  SKYGGE_TOKENS_UT: 18
 };
 
 /**
@@ -69,6 +76,7 @@ function loggArtikler(ss, alleNyeTreff) {
 
   opprettFaneHvisManglende(ss, FANE_ARTIKKELLOGG, ARTIKKELLOGG_OVERSKRIFTER);
   var ark = ss.getSheetByName(FANE_ARTIKKELLOGG);
+  sikreArtikkelloggKolonner(ark);
 
   var aiModell = PropertiesService.getScriptProperties().getProperty('AI_MODEL') || '';
   var naa = new Date();
@@ -89,7 +97,10 @@ function loggArtikler(ss, alleNyeTreff) {
  *
  * @param {Object} treff - treffobjekt fra kjorMedieovervaking(), evt.
  *   muterte av vurderTreffMedAI() (aiRelevant/aiKategori/aiNevnerOss/
- *   aiNotat/aiIrrelevantGrunn/aiParseFeilet - se 10_AIIntegrasjon.gs)
+ *   aiNotat/aiIrrelevantGrunn/aiParseFeilet/aiValideringsFeilet, pluss
+ *   Steg E3s skygge-felt aiSkyggeVurdering/aiSkyggeTekstgrunnlag/
+ *   aiSkyggeValidering/aiSkyggeTokensInn/aiSkyggeTokensUt - alle valgfrie,
+ *   se 10_AIIntegrasjon.gs)
  * @param {Date} tidspunkt
  * @param {string} aiModell - AI_MODEL Script Property-verdien, evt. tom streng
  * @return {Array}
@@ -97,9 +108,10 @@ function loggArtikler(ss, alleNyeTreff) {
 function byggArtikkelloggRad(treff, tidspunkt, aiModell) {
   var kortBegrunnelse = treff.aiIrrelevantGrunn || treff.aiNotat || '';
 
-  // treff.tekstgrunnlag finnes ikke ennå (Steg B) - satt av Steg E3 nar
-  // TEKSTGRUNNLAG_MODUS tas i bruk. Standard er "ingress", som stemmer med
-  // dagens faktiske oppførsel (se Steg A, punkt 1).
+  // treff.tekstgrunnlag er "ingress" med mindre Steg E3 (TEKSTGRUNNLAG_MODUS
+  // != "ingress", IKKE skyggemodus) faktisk brukte et utvidet tekstgrunnlag
+  // som PRIMÆR kilde for dette treffet - se Steg A, punkt 1 for hvorfor
+  // "ingress" er riktig standard.
   var tekstgrunnlag = treff.tekstgrunnlag || 'ingress';
 
   return [
@@ -115,7 +127,12 @@ function byggArtikkelloggRad(treff, tidspunkt, aiModell) {
     treff.aiNevnerOss ? 'Ja' : 'Nei',
     'Ja', // se filoverskriften: raden skrives kun etter vellykket utsending
     tidspunkt,
-    kortBegrunnelse
+    kortBegrunnelse,
+    treff.aiSkyggeVurdering || '',
+    treff.aiSkyggeTekstgrunnlag || '',
+    treff.aiSkyggeValidering || '',
+    typeof treff.aiSkyggeTokensInn === 'number' ? treff.aiSkyggeTokensInn : '',
+    typeof treff.aiSkyggeTokensUt === 'number' ? treff.aiSkyggeTokensUt : ''
   ];
 }
 
@@ -125,19 +142,40 @@ function byggArtikkelloggRad(treff, tidspunkt, aiModell) {
  * aldri ble kalt for) til bruk i Artikkellogg.
  *
  * "Tvil" settes KUN av koden her - ALDRI av modellens eget JSON-svar
- * (feltet "relevant" der er uansett bare true/false). I Steg B er
- * parse-feil (etter retry, se 09_AITest.gs/tolkAiKategoriseringsSvar())
- * den eneste kilden til "Tvil". Steg E3 legger til et validateSummary-avvik
- * som en ekstra kilde, uten å endre denne funksjonens kontrakt.
+ * (feltet "relevant" der er uansett bare true/false). To uavhengige kilder
+ * til "Tvil": aiParseFeilet (JSON-svaret kunne ikke tolkes, se
+ * 09_AITest.gs/tolkAiKategoriseringsSvar()) og aiValideringsFeilet (Steg
+ * E3 - validateSummary() fant for mange uverifiserte egennavn/tall i et
+ * ELLERS gyldig svar, se 10_AIIntegrasjon.gs).
  *
  * @param {Object} treff
  * @return {string} "Relevant" | "Tvil" | "Ikke relevant" | "Ikke vurdert"
  */
 function bestemKiVurdering(treff) {
-  if (treff.aiParseFeilet) return 'Tvil';
+  if (treff.aiParseFeilet || treff.aiValideringsFeilet) return 'Tvil';
   if (treff.aiRelevant === true) return 'Relevant';
   if (treff.aiRelevant === false) return 'Ikke relevant';
   return 'Ikke vurdert';
+}
+
+/**
+ * Sikrer at "Artikkellogg" har de 18 kolonnene (inkl. de 5 skygge-
+ * kolonnene lagt til i Steg E3). Eldre ark som kun hadde de 13 forste
+ * kolonnene (Steg B) far de nye overskriftene lagt til automatisk til
+ * HOYRE - samme monster som sikreSendteArtiklerKolonner()
+ * (05_Deduplisering.gs) og sikreKjoretidsloggKolonner() (10_AIIntegrasjon.gs).
+ *
+ * @param {Sheet} ark
+ */
+function sikreArtikkelloggKolonner(ark) {
+  if (ark.getLastColumn() >= 18) return;
+
+  var nyeOverskrifter = [
+    'Skygge-vurdering', 'Skygge-tekstgrunnlag', 'Skygge-validering',
+    'Skygge tokens inn', 'Skygge tokens ut'
+  ];
+  ark.getRange(1, 14, 1, nyeOverskrifter.length).setValues([nyeOverskrifter]);
+  ark.getRange(1, 14, 1, nyeOverskrifter.length).setFontWeight('bold');
 }
 
 /**
