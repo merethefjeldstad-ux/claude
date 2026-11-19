@@ -24,7 +24,7 @@ assert.strictEqual((kode.match(/api\.anthropic\.com/g) || []).length, 1); // bar
 assert.ok(!/getSheetByName\((?:FANE_|'Sendte|'Artikkellogg|'Referansesett|'Kjøretidslogg|'Mottakere)/.test(kode));
 // Ingen skriving til beskyttede faner: skrivFane kalles kun med egne fanekonstanter
 (kode.match(/opoint_t3_skrivFane\(ss, ([A-Z0-9_]+)/g) || []).forEach(m =>
-  assert.ok(/OPOINT_(DIAG_FANE|DIAG_FANE_DEKNING|KJOR_FANE|KJOR_FANE_SPORRINGER|KJ_TEST1_FANE|KJ_UKE_FANE|KJ_TEST2_FANE|KJ_TESTD_FANE|KJ_T2B_FANE|KJ_T2C_FANE|KJ_T2DE_FANE|KJOR_FANE_ALLE|KJ_SCAN_FANE|KJ_T420_FANE)$/.test(m.split(', ')[1]), m));
+  assert.ok(/OPOINT_(DIAG_FANE|DIAG_FANE_DEKNING|KJOR_FANE|KJOR_FANE_SPORRINGER|KJ_TEST1_FANE|KJ_UKE_FANE|KJ_TEST2_FANE|KJ_TESTD_FANE|KJ_T2B_FANE|KJ_T2C_FANE|KJ_T2DE_FANE|KJOR_FANE_ALLE|KJ_SCAN_FANE|KJ_T420_FANE|KJ_TDEDUP_FANE)$/.test(m.split(', ')[1]), m));
 assert.strictEqual(f.OPOINT_KJOR_SEND_EPOST, undefined); // e-post er fjernet helt
 
 // --- Body ---
@@ -681,3 +681,55 @@ console.log('420-test, tverrbolk og nytt forsøk OK');
   assert.ok(kall.slice(3).every(b => b.messages[0].content.split('\n').length <= 400));
 })();
 console.log('Parvis tverrbolk OK');
+
+// ===================== Dedup etter Kildeprioritet, sporing, tak-advarsel =====================
+(function () {
+  const prio = { kart: f.opoint_kj_prioritetFraRader([['Domene', 'Nivå', 'Åpen'], ['skipsrevyen.no', 1, 'ja'], ['logistikkinside.no', 2, 'ja'],
+    ['radioh.no', 3, 'nei'], ['spam.no', 4, '']]), kilder: {} };
+  const sr = doc({ id_article: 1, id_site: 64, equalgroup: 777, orig_url: 'https://www.skipsrevyen.no/a', header: { text: '420 millioner til tolv batteridrevne skip og to ladeanlegg' }, unix_timestamp: 300 });
+  const li = doc({ id_article: 2, id_site: 338722, equalgroup: 777, orig_url: 'https://logistikkinside.no/b', header: { text: '420 millioner kroner til batteribytte og elektriske bulkskip' }, unix_timestamp: 200 });
+  const rh = doc({ id_article: 3, id_site: 9, equalgroup: 777, orig_url: 'https://radioh.no/c', header: { text: 'Hagland Shipping får 236 millioner til batteridrevne skip' }, unix_timestamp: 100 });
+  const sp4 = doc({ id_article: 4, id_site: 8, equalgroup: 888, orig_url: 'https://spam.no/x', header: { text: 'Spam' } });
+  const ok4 = doc({ id_article: 5, id_site: 7, equalgroup: 888, orig_url: 'https://ukjent.org/x', header: { text: 'Spam omskrevet' } });
+  // C kommer før D: Radio H og Logistikk Inside hentes først, Skipsrevyen sist
+  const res = [{ strom: 'C', navn: 'C tema-no', searchterm: 'c', dokumenter: [rh, sp4] },
+    { strom: 'D', navn: 'D2 del 1/3', searchterm: 'd2', dokumenter: [li] },
+    { strom: 'D', navn: 'D1 del 1/2', searchterm: 'd1', dokumenter: [sr, ok4] }];
+  const gammel = f.opoint_kj_dedup(res, [], prio, true);
+  assert.strictEqual(gammel.length, 2); assert.strictEqual(gammel[0].doc, rh); // første treff vant
+  assert.deepStrictEqual(J(gammel.dedupFjernet), { equalgroup: 3, url: 0 });
+  const ny = f.opoint_kj_dedup(res, [], prio);
+  assert.strictEqual(ny[0].doc, sr); assert.strictEqual(ny[0].domene, 'skipsrevyen.no'); // nivå 1 vinner
+  assert.deepStrictEqual(J(ny[0].strommer), ['C', 'D']);
+  assert.strictEqual(ny[0].slattSammen.length, 2);
+  assert.strictEqual(ny[1].doc, ok4); assert.strictEqual(ny[1].ekskludert, false); // nivå 4 taper mot ukjent (nivå 3)
+  const spor = f.opoint_kj_sporDedup(ny, { tittel: 'Hagland Shipping får 236 millioner til batteridrevne skip' });
+  assert.strictEqual(spor.status, 'slått sammen (equalgroup)'); assert.strictEqual(spor.k.doc, sr);
+  assert.strictEqual(f.opoint_kj_sporDedup(gammel, { tittel: '420 millioner til tolv batteridrevne skip og to ladeanlegg' }).status, 'slått sammen (equalgroup)');
+  // Samme nivå: Åpen ja før nei, så tidligst publisert
+  const p2 = { kart: f.opoint_kj_prioritetFraRader([['Domene', 'Nivå', 'Åpen'], ['a.no', 2, 'nei'], ['b.no', 2, 'ja'], ['c.no', 2, 'ja']]), kilder: {} };
+  const da = doc({ id_article: 1, equalgroup: 1, orig_url: 'https://a.no/1', unix_timestamp: 1 });
+  const db = doc({ id_article: 2, equalgroup: 1, orig_url: 'https://b.no/1', unix_timestamp: 50 });
+  const dc = doc({ id_article: 3, equalgroup: 1, orig_url: 'https://c.no/1', unix_timestamp: 10 });
+  assert.strictEqual(f.opoint_kj_dedup([{ strom: 'B', navn: 'b', searchterm: 'x', dokumenter: [da, db, dc] }], [], p2)[0].doc, dc);
+  // URL-dedup telles separat
+  const u = f.opoint_kj_dedup([{ strom: 'B', navn: 'b', searchterm: 'x', dokumenter: [doc({ id_article: 1, orig_url: 'https://e.no/1' }), doc({ id_article: 2, orig_url: 'http://www.e.no/1/' })] }], []);
+  assert.deepStrictEqual(J(u.dedupFjernet), { equalgroup: 0, url: 1 });
+
+  // Tak-advarsel ved 100 dokumenter
+  const m = klient(b => ok(Array.from({ length: 25 }, (_, i) => doc({ id_article: i + 25 * (Number(b.params.context) || 0) })), String((Number(b.params.context) || 0) + 1)), 10);
+  const r = f.opoint_kj_hentAlle(m.kl, [{ strom: 'B', navn: 'B stor', searchterm: 'x' }], { oldest: 1, newest: 2 }, () => false);
+  assert.strictEqual(r[0].takNadd, true); assert.ok(r[0].merknad.includes('ADVARSEL') && r[0].merknad.includes('100'));
+  assert.ok(logg.some(l => l.includes('B stor') && l.includes('ADVARSEL')));
+  const m2 = klient(() => ok([doc({})], ''), 10);
+  assert.ok(!f.opoint_kj_hentAlle(m2.kl, [{ strom: 'B', navn: 'B liten', searchterm: 'x' }], { oldest: 1, newest: 2 }, () => false)[0].takNadd);
+
+  // Rapportrader
+  const forb = { kandidater: ny, resultater: res, klient: { antall: () => 3, takNadd: () => false }, oppsett: { merknader: ['m'] } };
+  const rr = f.opoint_kj_byggRaderTestDedup(forb, gammel, { oldest: 1, newest: 2 }, d);
+  const i2 = rr.findIndex(x => x[0] === '2) Etter dedup');
+  assert.strictEqual(rr[i2 + 1][2], 'slått sammen (equalgroup)'); assert.ok(rr[i2 + 1][3].includes('radioh.no'));
+  assert.strictEqual(rr[i2 + 1][4], 'beholdt');
+  assert.ok(rr.some(x => x[1] === 'Skipsrevyen' && x[4] === 777 && x[5] === 64));
+})();
+console.log('Dedup etter Kildeprioritet OK');
