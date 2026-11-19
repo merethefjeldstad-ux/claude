@@ -45,8 +45,9 @@
 var OPOINT_KJOR_START = '2026-11-17 07:30';
 var OPOINT_KJOR_SLUTT = '2026-11-18 07:30';
 
-// Steg 2/3 kjøres uten KI. Settes til true først i steg 4–5.
-var OPOINT_KJOR_KI_AKTIV = false;
+// Steg 4–5: samlet KI-kjøring (saksgruppering + relevans for representanter,
+// maks OPOINT_KJOR_MAKS_KI_KALL kall). Sett til false for å kjøre uten KI.
+var OPOINT_KJOR_KI_AKTIV = true;
 // Maks antall Anthropic-kall per kjøring (saksgruppering + relevans). Treff fra
 // hurtigbufferen (gjenopptak) teller ikke.
 var OPOINT_KJOR_MAKS_KI_KALL = 80;
@@ -99,7 +100,8 @@ var OPOINT_B_POSITIV = '(vessel* OR ship OR shipping)';
 // engine"). "blood vessel*" er skrevet som to fraser fordi jokertegn inni frase
 // ikke er dokumentert.
 var OPOINT_B_ANDNOT_ORD = ['smartphone*', 'phone*', 'laptop*', 'gadget*', '"e-bike"', '"e-bikes"', 'ebike*',
-  '"free shipping"', '"ships with"', 'hair*', 'comb', 'combs', '"blood vessel"', '"blood vessels"'];
+  '"free shipping"', 'hair*', 'comb', 'combs', '"blood vessel"', '"blood vessels"'];
+// "ships with" er fjernet: bekreftet årsak til at Scandasia-saken falt ut.
 // Ord som skal tas UT av ANDNOT-listen (fylles inn etter opoint_kj_testSteg2B,
 // som viser hvilke ord som fjerner de tre relevante sakene).
 var OPOINT_B_ANDNOT_FJERN = [];
@@ -933,11 +935,27 @@ function opoint_kj_ingress(doc) {
   return opointTekstFelt(doc && doc.summary).replace(/\s+/g, ' ').trim();
 }
 
-/** Teksten KI får. Lengden skrives i kolonnen "Tegn sendt til KI". */
+/**
+ * Ingress for visning: ordrett, men med «…» lagt til hvis den ikke slutter på
+ * . ! ? eller … (avsluttende anførselstegn/parentes ses bort fra). Tom ingress
+ * gir tom streng – saken vises da med tittelen alene.
+ */
+function opoint_kj_visIngress(doc) {
+  var t = opoint_kj_ingress(doc);
+  if (!t) return '';
+  var uten = t.replace(/["'”’»)\]]+$/, '');
+  return /[.!?…]$/.test(uten) ? t : t + '…';
+}
+
+/**
+ * Teksten KI får: ingressen ordrett (uten tillagt «…»). Tom ingress → bare
+ * overskrift (og kilde). Lengden skrives i kolonnen "Tegn sendt til KI".
+ */
 function opoint_kj_kiBrukerTekst(k) {
   var fs = k.doc.first_source || {};
   var kilde = fs.sitename || fs.name || k.domene || '';
-  return 'Overskrift: ' + opointTekstFelt(k.doc.header).replace(/\s+/g, ' ').trim() + '\nIngress: ' + opoint_kj_ingress(k.doc) +
+  var ingress = opoint_kj_ingress(k.doc);
+  return 'Overskrift: ' + opointTekstFelt(k.doc.header).replace(/\s+/g, ' ').trim() + (ingress ? '\nIngress: ' + ingress : '') +
     (kilde ? '\nKilde: ' + kilde : '');
 }
 
@@ -1097,7 +1115,7 @@ function opoint_kj_byggRaderSaker(forb, saker, vindu, ki, d) {
   saker.forEach(function (sak) {
     var r = sak.representant, doc = r.doc, ts = doc.unix_timestamp, kr = sak.kiResultat || {};
     rader.push([sak.id, sak.strommer.join(', '), typeof ts === 'number' ? d.fmtSek(ts) : '', opointTekstFelt(doc.header),
-      opoint_t3_artikkelUrl(doc), opoint_kj_ingress(doc), opoint_language(doc.language), r.domene, r.niva, r.apen,
+      opoint_t3_artikkelUrl(doc), opoint_kj_visIngress(doc), opoint_language(doc.language), r.domene, r.niva, r.apen,
       sak.medlemmer.length - 1, sak.andreKilder, opoint_kj_kiTekst(sak.kiResultat), kr.kategori || '',
       kr.relevant === null || kr.relevant === undefined ? '' : (kr.nevnerOss ? 'ja' : 'nei'), kr.notat || '',
       kr.irrelevantGrunn || '', opoint_kj_ingressHarSokeord(r) ? 'ja' : 'nei', kr.tegn || '', kr.kilde || kr.feil || '',
@@ -1107,17 +1125,23 @@ function opoint_kj_byggRaderSaker(forb, saker, vindu, ki, d) {
 }
 
 function opoint_kj_byggRaderAlle(forb, saker, vindu, d) {
-  var rader = [['Vindu', d.fmtSek(vindu.oldest) + ' – ' + d.fmtSek(vindu.newest), 'Artikler', forb.kandidater.length], [''],
+  var antEkskl = forb.kandidater.filter(function (k) { return k.ekskludert; }).length;
+  var rader = [['Vindu', d.fmtSek(vindu.oldest) + ' – ' + d.fmtSek(vindu.newest), 'Artikler', forb.kandidater.length,
+    'hvorav ekskludert (nederst)', antEkskl], [''],
     ['Saksgruppe', 'Representant', 'Strøm(mer)', 'Dato', 'Tittel', 'URL', 'Ingress (Opoint, ordrett)', 'Språk',
       'Domene', 'Nivå', 'Åpen', 'Nivågrunnlag', 'Ekskludert?', 'Ingress inneholder søkeord', 'Apps Script-status',
-      'equalgroup', 'id_site', 'Spørringer']];
-  forb.kandidater.forEach(function (k) {
+      'equalgroup', 'id_site', 'Spørringer', 'Ekskluderingsgrunn']];
+  // Ekskluderte (nivå 4, skipsregister, ekskluderte domener) står nederst så de er lette å kontrollere.
+  var sortert = forb.kandidater.filter(function (k) { return !k.ekskludert; })
+    .concat(forb.kandidater.filter(function (k) { return k.ekskludert; }));
+  sortert.forEach(function (k) {
     var doc = k.doc, ts = doc.unix_timestamp;
     rader.push([k.sak, k.erRepresentant ? 'JA' : '', k.strommer.join(', '), typeof ts === 'number' ? d.fmtSek(ts) : '',
-      opointTekstFelt(doc.header), opoint_t3_artikkelUrl(doc), opoint_kj_ingress(doc), opoint_language(doc.language),
-      k.domene, k.niva, k.apen, k.nivaGrunnlag, k.ekskludert ? 'ja (' + k.ekskluderGrunn + ')' : '',
+      opointTekstFelt(doc.header), opoint_t3_artikkelUrl(doc), opoint_kj_visIngress(doc), opoint_language(doc.language),
+      k.domene, k.niva, k.apen, k.nivaGrunnlag, k.ekskludert ? 'ja' : 'nei',
       opoint_kj_ingressHarSokeord(k) ? 'ja' : 'nei', k.appsStatus,
-      doc.equalgroup !== undefined && doc.equalgroup !== null ? doc.equalgroup : '', doc.id_site, k.sporringer.join(' | ')]);
+      doc.equalgroup !== undefined && doc.equalgroup !== null ? doc.equalgroup : '', doc.id_site, k.sporringer.join(' | '),
+      k.ekskludert ? k.ekskluderGrunn : '']);
   });
   return rader;
 }

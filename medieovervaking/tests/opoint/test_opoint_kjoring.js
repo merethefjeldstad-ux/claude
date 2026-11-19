@@ -335,12 +335,12 @@ console.log('Rettelse d + steg 2-tester OK');
 (function () {
   // 2b: B med gammel positiv kontekst + ANDNOT
   const B = f.opoint_kj_byggStromB(false);
-  assert.strictEqual(B[0].searchterm, 'header:ammonia AND (vessel* OR ship OR shipping) ANDNOT (smartphone* OR phone* OR laptop* OR gadget* OR "e-bike" OR "e-bikes" OR ebike* OR "free shipping" OR "ships with" OR hair* OR comb OR combs OR "blood vessel" OR "blood vessels")');
+  assert.strictEqual(B[0].searchterm, 'header:ammonia AND (vessel* OR ship OR shipping) ANDNOT (smartphone* OR phone* OR laptop* OR gadget* OR "e-bike" OR "e-bikes" OR ebike* OR "free shipping" OR hair* OR comb OR combs OR "blood vessel" OR "blood vessels")');
+  assert.ok(!B.some(x => x.searchterm.includes('ships with')), '"ships with" er fjernet');
   assert.ok(!B[0].searchterm.includes('comb*'), 'comb* ville truffet combustion');
   assert.ok(B[6].searchterm.startsWith('(header:battery OR header:electric) AND (ferry OR vessel* OR ship) ANDNOT ('));
-  const Bu = f.opoint_kj_byggStromB(false, ['phone*', '"ships with"']);
-  assert.ok(!Bu[0].searchterm.includes('phone*)') && !Bu[0].searchterm.includes(' phone*') && Bu[0].searchterm.includes('smartphone*'));
-  assert.ok(!Bu[0].searchterm.includes('ships with'));
+  const Bu = f.opoint_kj_byggStromB(false, ['phone*']);
+  assert.ok(!Bu[0].searchterm.includes(' phone*') && Bu[0].searchterm.includes('smartphone*'));
   f.OPOINT_B_ANDNOT_FJERN.push('gadget*'); assert.ok(!f.opoint_kj_byggStromB(false)[0].searchterm.includes('gadget')); f.OPOINT_B_ANDNOT_FJERN.length = 0;
   assert.ok(B.every(x => !/AND NOT/.test(x.searchterm)));
 
@@ -355,16 +355,16 @@ console.log('Rettelse d + steg 2-tester OK');
     if (!hvem) return ok([]);
     if (!st.includes(' AND (')) return ok([hvem, doc({ id_article: 99, header: { text: 'Annet' } })]);
     if (hvem === aura && st.endsWith('(phone*)')) return ok([hvem]);
-    if (hvem === den && st.endsWith('("ships with")')) return ok([hvem]);
+    if (hvem === den && st.endsWith('(gadget*)')) return ok([hvem]);
     return ok([]);
   }, 130);
   const a = f.opoint_kj_kjorSteg2A(m.kl, { oldest: 1, newest: 2 }, () => false);
-  assert.deepStrictEqual(J(a.skyldige), ['phone*', '"ships with"']);
-  assert.deepStrictEqual(J(a.artikler.map(r => r.treffOrd)), [['phone*'], [], ['"ships with"']]);
+  assert.deepStrictEqual(J(a.skyldige), ['phone*', 'gadget*']);
+  assert.deepStrictEqual(J(a.artikler.map(r => r.treffOrd)), [['phone*'], [], ['gadget*']]);
   assert.strictEqual(m.kall.length, 3 + 3 * f.OPOINT_B_ANDNOT_ORD.length);
   assert.ok(a.artikler.every(r => r.funnet));
   const ra = f.opoint_kj_byggRaderSteg2A(a, { oldest: 1, newest: 2 }, m.kl, d);
-  assert.strictEqual(ra[1][1], 'phone*, "ships with"');
+  assert.strictEqual(ra[1][1], 'phone*, gadget*');
 
   // Uønskede titler
   const u = f.opoint_kj_byggRaderUonsket([{ navn: 'B x', gammel: { dokumenter: [doc({ header: { text: 'New smartphone ships with 5G' } })] },
@@ -415,8 +415,8 @@ console.log('Rettelse d + steg 2-tester OK');
   assert.deepStrictEqual(J(plan.rader), [['splash247.com', '', '', 'Ny, ikke vurdert']]);
   assert.ok(f.opoint_kj_planNyeDomener([['Navn']], []).feil.includes('Domene'));
   assert.strictEqual(f.opoint_kj_normDomene('https://www.msn.com/en-us/news'), 'msn.com');
-  // KI er av som standard
-  assert.strictEqual(f.OPOINT_KJOR_KI_AKTIV, false);
+  // KI er på for den samlede kjøringen (steg 4–5)
+  assert.strictEqual(f.OPOINT_KJOR_KI_AKTIV, true);
 })();
 console.log('Steg 2 (rettet)-tester OK');
 
@@ -552,10 +552,29 @@ console.log('Steg 2 (rettet)-tester OK');
   const rs1 = f.opoint_kj_byggRaderSaker(forb, saker, { oldest: 1, newest: 2 }, ki, d);
   assert.strictEqual(rs1[3][21], 'Min vurdering'); assert.strictEqual(rs1[3][10], 'Antall tilsvarende saker');
   assert.strictEqual(rs1.length, 4 + 3); assert.strictEqual(rs1[4][10], 1); assert.strictEqual(rs1[4][11], 'a.no');
-  assert.strictEqual(rs1[4][5], 'Ammonia ship'); assert.strictEqual(rs1[4][18], '');
+  assert.strictEqual(rs1[4][5], 'Ammonia ship…'); assert.strictEqual(rs1[4][18], ''); // visning: … lagt til
   const iEp = rs1[0].indexOf('E-post A'); assert.strictEqual(rs1[0][iEp + 1], 2); // HyShip-saken (A+B) og GASS-saken (A)
   const ra = f.opoint_kj_byggRaderAlle(forb, saker, { oldest: 1, newest: 2 }, d);
   assert.strictEqual(ra.length, 3 + 4); assert.strictEqual(ra.filter(r => r[1] === 'JA').length, 3);
+  // Punkt 3: ekskluderte vises nederst med Ekskludert? = ja og grunn
+  kand[2].ekskludert = true; kand[2].ekskluderGrunn = 'Kildeprioritet nivå 4';
+  const ra2 = f.opoint_kj_byggRaderAlle(forb, saker, { oldest: 1, newest: 2 }, d);
+  const iEk = ra2[2].indexOf('Ekskludert?'), iGr = ra2[2].indexOf('Ekskluderingsgrunn');
+  assert.strictEqual(ra2[ra2.length - 1][iEk], 'ja'); assert.strictEqual(ra2[ra2.length - 1][iGr], 'Kildeprioritet nivå 4');
+  assert.strictEqual(ra2[3][iEk], 'nei'); assert.strictEqual(ra2[0][5], 1);
+  kand[2].ekskludert = false; kand[2].ekskluderGrunn = '';
+
+  // Punkt 4: ingress-visning og tom ingress
+  const vis = t => f.opoint_kj_visIngress(doc({ summary: { text: t } }));
+  assert.strictEqual(vis('Ferdig setning.'), 'Ferdig setning.');
+  assert.strictEqual(vis('Spørsmål?'), 'Spørsmål?'); assert.strictEqual(vis('Utrop!'), 'Utrop!');
+  assert.strictEqual(vis('Avkuttet …'), 'Avkuttet …'); assert.strictEqual(vis('Avkuttet midt i'), 'Avkuttet midt i…');
+  assert.strictEqual(vis('Han sa «ja.»'), 'Han sa «ja.»'); assert.strictEqual(vis('He said "yes."'), 'He said "yes."');
+  assert.strictEqual(vis('  '), '');
+  const tom = { doc: doc({ header: { text: 'Bare tittel' }, summary: { text: '' }, first_source: { sitename: 'Kilde' } }), domene: 'x.no' };
+  assert.strictEqual(f.opoint_kj_kiBrukerTekst(tom), 'Overskrift: Bare tittel\nKilde: Kilde');
+  const med = { doc: doc({ header: { text: 'T' }, summary: { text: 'Avkuttet midt i' } }), domene: 'x.no' };
+  assert.ok(f.opoint_kj_kiBrukerTekst(med).includes('Ingress: Avkuttet midt i\n')); // KI får ordrett, uten tillagt …
 
   // Verifiseringskontroller
   const kt = f.opoint_kj_kontrollerSak({ type: 'samme', re: [/hyship/i] }, kand);
