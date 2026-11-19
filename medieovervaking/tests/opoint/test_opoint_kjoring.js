@@ -584,3 +584,6 @@ console.log('Steg 2 (rettet)-tester OK');
   assert.strictEqual(f.opoint_kj_kontrollerSak({ type: 'samme', re: [/finnes ikke/] }, kand).status, 'IKKE BEVIST');
 })();
 console.log('Rettelse a–c + steg 3–5-tester OK');
+// Intern hjelpefunksjon kjørt alene gir forståelig feil
+assert.throws(() => f.opoint_kj_kjorScandasia(undefined, { oldest: 1, newest: 2 }), /intern hjelpefunksjon/);
+console.log('Vakt mot direkte kjøring OK');

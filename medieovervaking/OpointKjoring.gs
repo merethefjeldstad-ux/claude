@@ -294,6 +294,10 @@ function opoint_kj_finnKolonner(overskrifter, navnelister, pakrevd) {
 
 /** Kjører én spørring med paging. Returnerer resultatobjekt (feil fanges, kjøringen fortsetter). */
 function opoint_kj_hentSporring(klient, sp, vindu, requested, maksBatcher, groupidentical, tidUte) {
+  if (!klient || typeof klient.kall !== 'function') {
+    throw new Error('Dette er en intern hjelpefunksjon og kan ikke kjøres alene. Kjør test- eller kjørefunksjonen ' +
+      '(f.eks. opoint_kj_testScandasia, opoint_kj_testSaker2 eller opoint_kjor).');
+  }
   var res = { navn: sp.navn, strom: sp.strom || '', searchterm: sp.searchterm, statuser: [], batcher: 0,
     dokumenter: [], rangeCount: [], contextTom: '', feil: '', merknad: '' };
   var context = '';
