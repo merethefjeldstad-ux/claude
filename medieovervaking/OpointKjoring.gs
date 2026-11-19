@@ -113,12 +113,15 @@ var OPOINT_KJOR_STROM_C = [
 // Strøm D: norske fagkilder via site:-filteret ("site:11,14,110" i
 // search-syntax). Første batch brukes som verifisering: alle returnerte
 // id_site må være i listen, ellers forkastes strømmen.
+// Rettelse a: Skipsrevyen er id_site 64 (288 var trolig en kilde-id).
+// "domene" er forventet domene, brukt til å kontrollere id-ene mot forrige
+// kjøring (opoint_kj_testD) og som reserve når forrige kjøring ikke viser kilden.
 var OPOINT_KJOR_D_SITES = [
-  { id: 288, navn: 'Skipsrevyen' },
-  { id: 19526, navn: 'Maritimt Magasin' },
-  { id: 18139, navn: 'Kystmagasinet' },
-  { id: 338722, navn: 'Logistikk Inside' },
-  { id: 141703, navn: 'Energi og Klima' }
+  { id: 64, navn: 'Skipsrevyen', domene: 'skipsrevyen.no' },
+  { id: 19526, navn: 'Maritimt Magasin', domene: 'maritimt.com' },
+  { id: 18139, navn: 'Kystmagasinet', domene: 'kystmagasinet.no' },
+  { id: 338722, navn: 'Logistikk Inside', domene: 'logistikkinside.no' },
+  { id: 141703, navn: 'Energi og Klima', domene: 'energiogklima.no' }
 ];
 var OPOINT_KJOR_D_AKTIV = true;
 
@@ -133,7 +136,7 @@ var OPOINT_KJOR_D_TEMAORD = ['hydrogen*', 'ammoniakk*', 'batteri*', 'elektrisk*'
 var OPOINT_KJOR_D2_KONTEKST = ['skip*', 'fartøy*', 'ferge*', 'ferje*', 'rederi*', 'havn*', 'maritim*'];
 var OPOINT_KJOR_D_MAKS_ORD = 15;
 // Rettelse c: faste D-grupper som overstyrer domenetilordningen.
-var OPOINT_KJOR_D_FAST_GRUPPE = { '288': 'D1' }; // Skipsrevyen
+var OPOINT_KJOR_D_FAST_GRUPPE = { '64': 'D1' }; // Skipsrevyen
 
 // Rettelse a: unntak per Tier 2-ord (skrivemåte som i "Søkeord"). Bygges som
 // "ORD AND (kontekst) ANDNOT (unntak)". ANDNOT er operatoren som står i
@@ -722,11 +725,13 @@ function opoint_kj_siteDomenerFraRader(data) {
 /** Tilordner hver kilde i OPOINT_KJOR_D_SITES til D1/D2 ut fra domenet. */
 function opoint_kj_tilordneD(siteDomener) {
   return OPOINT_KJOR_D_SITES.map(function (s) {
-    var dom = siteDomener[String(s.id)] || '';
+    var sett = siteDomener[String(s.id)] || '';
+    var dom = sett || s.domene || '';
     var fast = OPOINT_KJOR_D_FAST_GRUPPE[String(s.id)];
     var gruppe = fast || (dom && OPOINT_KJOR_D1_DOMENER.indexOf(dom) >= 0 ? 'D1' : 'D2');
-    return { id: s.id, navn: s.navn, domene: dom || '(ukjent – ikke sett i forrige kjøring)', gruppe: gruppe,
-      kilde: fast ? 'fast (OPOINT_KJOR_D_FAST_GRUPPE)' : 'domene' };
+    return { id: s.id, navn: s.navn, domene: sett || (dom ? dom + ' (fra konfigurasjon, ikke sett i forrige kjøring)' :
+      '(ukjent – ikke sett i forrige kjøring)'), gruppe: gruppe,
+      kilde: fast ? 'fast (OPOINT_KJOR_D_FAST_GRUPPE)' : (sett ? 'domene fra forrige kjøring' : 'domene fra konfigurasjon') };
   });
 }
 
@@ -1286,9 +1291,11 @@ function opoint_kj_byggRaderTestSteg1(r, oppsett, vindu, vinduH, klient, d) {
 
 var OPOINT_KJ_UKE_START = '';
 var OPOINT_KJ_UKE_SLUTT = '';
-var OPOINT_KJ_UKE_ORD = ['FLAGSHIPS', 'TrAM', 'zero-emission zone'];
+// Rettelse b: fem Tier 2-ord. Tomme datoer = siste OPOINT_KJ_UKE_DAGER dager.
+var OPOINT_KJ_UKE_ORD = ['FLAGSHIPS', 'TrAM', 'Apollo', 'AWESOME', 'zero-emission zone'];
+var OPOINT_KJ_UKE_DAGER = 30;
 var OPOINT_KJ_UKE_FANE = 'Opoint-test uke';
-var OPOINT_KJ_UKE_MAKS_KALL = 20;
+var OPOINT_KJ_UKE_MAKS_KALL = 25;
 
 function opoint_kj_testUke() {
   var apiKey = opoint_t3_hentNokkel();
@@ -1297,11 +1304,11 @@ function opoint_kj_testUke() {
   var d = opoint_t3_datoFunksjoner();
   var rader;
   try {
-    if (!String(OPOINT_KJ_UKE_START).trim() || !String(OPOINT_KJ_UKE_SLUTT).trim()) {
-      rader = [['STOPPET', 'Fyll inn OPOINT_KJ_UKE_START og OPOINT_KJ_UKE_SLUTT (yyyy-MM-dd HH:mm) øverst i uketest-delen.']];
-    } else {
+    {
       var parse = function (s) { return Utilities.parseDate(s, 'Europe/Oslo', 'yyyy-MM-dd HH:mm'); };
-      var vindu = opoint_beregnVindu(OPOINT_KJ_UKE_START, OPOINT_KJ_UKE_SLUTT, undefined, startMs, parse);
+      var tomme = !String(OPOINT_KJ_UKE_START).trim() && !String(OPOINT_KJ_UKE_SLUTT).trim();
+      var vindu = tomme ? opoint_t3_vinduDager(OPOINT_KJ_UKE_DAGER, startMs)
+        : opoint_beregnVindu(OPOINT_KJ_UKE_START, OPOINT_KJ_UKE_SLUTT, undefined, startMs, parse);
       var oppsett = opoint_kj_lesOppsett(ss);
       var klient = opoint_t3_lagKlient(apiKey, OPOINT_KJ_UKE_MAKS_KALL);
       var res = opoint_kj_kjorUke(klient, oppsett.tier2, vindu, opoint_kj_tidsvakt(startMs, OPOINT_KJOR_TIDSBUDSJETT_MS));
@@ -1427,6 +1434,115 @@ function opoint_kj_byggRaderTestSteg2(s, vindu, klient, forrigeKi, d) {
     x.borte.forEach(function (b) {
       rader.push(['', x.navn, b.tittel, b.domene, b.url, b.kiForrige || '(ikke funnet)',
         b.kiForrige === 'ja' ? 'KI-RELEVANT FORSVANT' : '']);
+    });
+  });
+  return rader;
+}
+
+// =====================================================================
+// Rettelse a – kontroll av D-kildenes id_site (ingen KI). Fane "Opoint-test D".
+// 1) Leser forrige "Opoint-kjøring" (kun lesing): hvilke id_site har treff
+//    fra hvert forventet domene, og hvilket id_site har kontrolltittelen.
+// 2) Kjører D1-spørringene mot dagsvinduet og 3.–10. november.
+// =====================================================================
+
+var OPOINT_KJ_TESTD_FANE = 'Opoint-test D';
+var OPOINT_KJ_TESTD_MAKS_KALL = 30;
+var OPOINT_KJ_TESTD_HIST_START = '2026-11-03 00:00';
+var OPOINT_KJ_TESTD_HIST_SLUTT = '2026-11-11 00:00'; // til og med 10. november
+var OPOINT_KJ_TESTD_KONTROLLTITTEL = 'Brann i ladetårn ved ferjekai';
+
+function opoint_kj_testD() {
+  var apiKey = opoint_t3_hentNokkel();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var startMs = Date.now();
+  var d = opoint_t3_datoFunksjoner();
+  var rader;
+  try {
+    var parse = function (s) { return Utilities.parseDate(s, 'Europe/Oslo', 'yyyy-MM-dd HH:mm'); };
+    var vinduer = [
+      { navn: 'dagsvindu', v: opoint_beregnVindu(OPOINT_KJOR_START, OPOINT_KJOR_SLUTT, undefined, startMs, parse) },
+      { navn: '3.–10. nov', v: opoint_beregnVindu(OPOINT_KJ_TESTD_HIST_START, OPOINT_KJ_TESTD_HIST_SLUTT, undefined, startMs, parse) }
+    ];
+    var forrige = ss.getSheetByName(OPOINT_KJOR_FANE);
+    var kontroll = opoint_kj_kontrollerDIder(forrige && forrige.getLastRow() >= 2 ? forrige.getDataRange().getValues() : []);
+    var oppsett = opoint_kj_lesOppsett(ss);
+    var klient = opoint_t3_lagKlient(apiKey, OPOINT_KJ_TESTD_MAKS_KALL);
+    var tidUte = opoint_kj_tidsvakt(startMs, OPOINT_KJOR_TIDSBUDSJETT_MS);
+    var d1 = opoint_kj_byggStromD(oppsett.tilordningD).filter(function (sp) { return sp.navn.indexOf('D1') === 0; });
+    var kjoringer = [];
+    vinduer.forEach(function (vi) {
+      d1.forEach(function (sp) {
+        var r = opoint_kj_hentSporring(klient, sp, vi.v, OPOINT_KJOR_REQUESTED, OPOINT_KJOR_MAKS_BATCHER, true, tidUte);
+        if (!r.feil) opoint_kj_verifiserSites(r, sp.verifiserSites);
+        r.vinduNavn = vi.navn;
+        kjoringer.push(r);
+      });
+    });
+    rader = opoint_kj_byggRaderTestD(kontroll, oppsett.tilordningD, kjoringer, vinduer, klient, d);
+  } catch (e) {
+    rader = [['FEIL', opointMaskerNokkel(String(e && e.message ? e.message : e), apiKey)]];
+  }
+  opoint_t3_skrivFane(ss, OPOINT_KJ_TESTD_FANE, rader, apiKey);
+  Logger.log('Skrevet til "' + OPOINT_KJ_TESTD_FANE + '".');
+}
+
+/** Ren funksjon: id_site per forventet domene i forrige kjøring, og id_site for kontrolltittelen. */
+function opoint_kj_kontrollerDIder(data) {
+  var ut = { kilder: [], kontrolltittel: [], fantOverskrift: false };
+  var iSite = -1, iDom = -1, iTit = -1, h;
+  for (h = 0; h < Math.min(10, data.length); h++) {
+    var hode = data[h].map(function (x) { return String(x).trim().toLowerCase(); });
+    iSite = hode.indexOf('id_site'); iDom = hode.indexOf('domene'); iTit = hode.indexOf('tittel');
+    if (iSite >= 0 && iDom >= 0) { ut.fantOverskrift = true; break; }
+  }
+  var perDomene = {};
+  if (ut.fantOverskrift) {
+    for (var r = h + 1; r < data.length; r++) {
+      var dom = String(data[r][iDom]).trim().toLowerCase().replace(/^www\./, '');
+      var id = String(data[r][iSite]).trim();
+      if (dom && id) { perDomene[dom] = perDomene[dom] || {}; perDomene[dom][id] = (perDomene[dom][id] || 0) + 1; }
+      if (iTit >= 0 && String(data[r][iTit]).indexOf(OPOINT_KJ_TESTD_KONTROLLTITTEL) >= 0) {
+        ut.kontrolltittel.push({ tittel: String(data[r][iTit]), id_site: id, domene: dom });
+      }
+    }
+  }
+  OPOINT_KJOR_D_SITES.forEach(function (s) {
+    var sett = perDomene[s.domene] || {};
+    var ider = Object.keys(sett);
+    var status = !ider.length ? 'ikke sett i forrige kjøring' :
+      (ider.length === 1 && ider[0] === String(s.id) ? 'OK' : 'AVVIK');
+    ut.kilder.push({ navn: s.navn, domene: s.domene, konfigurertId: s.id,
+      settIder: ider.map(function (i) { return i + ' (' + sett[i] + ' treff)'; }).join(', '), status: status });
+  });
+  return ut;
+}
+
+function opoint_kj_byggRaderTestD(kontroll, tilordning, kjoringer, vinduer, klient, d) {
+  var rader = [['Test D (id_site)', 'HTTP-kall', klient.antall(), 'Kalltak nådd?', klient.takNadd() ? 'Ja' : 'Nei', 'KI-kall', 0]];
+  rader.push(['']);
+  rader.push(['Kontroll mot forrige "' + OPOINT_KJOR_FANE + '"', kontroll.fantOverskrift ? '' : 'Fant ikke kolonnene id_site og Domene']);
+  rader.push(['Kilde', 'Forventet domene', 'Konfigurert id_site', 'id_site sett i forrige kjøring', 'Status']);
+  kontroll.kilder.forEach(function (k) { rader.push([k.navn, k.domene, k.konfigurertId, k.settIder, k.status]); });
+  rader.push(['Kontrolltittel "' + OPOINT_KJ_TESTD_KONTROLLTITTEL + '"', kontroll.kontrolltittel.length ?
+    kontroll.kontrolltittel.map(function (t) { return 'id_site ' + t.id_site + ' [' + t.domene + ']'; }).join(', ') : 'ikke funnet']);
+  rader.push(['']);
+  rader.push(['D-tilordning', 'id_site', 'Navn', 'Domene', 'Gruppe', 'Grunnlag']);
+  tilordning.forEach(function (t) { rader.push(['', t.id, t.navn, t.domene, t.gruppe, t.kilde]); });
+  rader.push(['']);
+  rader.push(['Vindu', 'Spørring', 'Søketekst', 'Status per batch', 'Dokumenter', 'Context tom?', 'Feil/merknad']);
+  kjoringer.forEach(function (r) {
+    rader.push([r.vinduNavn, r.navn, r.searchterm, r.statuser.join(', '), r.dokumenter.length, opoint_kj_ctxTekst(r), r.feil || r.merknad]);
+  });
+  rader.push(['']);
+  rader.push(['Vindu', 'Spørring', 'Skipsrevyen?', 'id_site', 'Domene', 'Dato', 'Tittel', 'URL']);
+  kjoringer.forEach(function (r) {
+    r.dokumenter.forEach(function (doc) {
+      var dom = opoint_kj_domene(doc);
+      var sr = String(doc.id_site) === '64' || dom === 'skipsrevyen.no';
+      rader.push([r.vinduNavn, r.navn, sr ? 'JA' : '', doc.id_site, dom,
+        typeof doc.unix_timestamp === 'number' ? d.fmtSek(doc.unix_timestamp) : '', opointTekstFelt(doc.header),
+        opoint_t3_artikkelUrl(doc)]);
     });
   });
   return rader;

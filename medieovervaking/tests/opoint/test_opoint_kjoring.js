@@ -23,7 +23,7 @@ assert.ok(!/newTrigger\(|MailApp\.|textrazor|readership|text:\s*1|api\.anthropic
 assert.ok(!/getSheetByName\((?:FANE_|'Sendte|'Artikkellogg|'Referansesett|'Kjøretidslogg|'Mottakere)/.test(kode));
 // Ingen skriving til beskyttede faner: skrivFane kalles kun med egne fanekonstanter
 (kode.match(/opoint_t3_skrivFane\(ss, ([A-Z0-9_]+)/g) || []).forEach(m =>
-  assert.ok(/OPOINT_(DIAG_FANE|DIAG_FANE_DEKNING|KJOR_FANE|KJOR_FANE_SPORRINGER|KJ_TEST1_FANE|KJ_UKE_FANE|KJ_TEST2_FANE)$/.test(m.split(', ')[1]), m));
+  assert.ok(/OPOINT_(DIAG_FANE|DIAG_FANE_DEKNING|KJOR_FANE|KJOR_FANE_SPORRINGER|KJ_TEST1_FANE|KJ_UKE_FANE|KJ_TEST2_FANE|KJ_TESTD_FANE)$/.test(m.split(', ')[1]), m));
 assert.strictEqual((kode.match(/GmailApp\.sendEmail/g) || []).length, 1);
 assert.ok(/Session\.getEffectiveUser\(\)\.getEmail\(\)/.test(kode));
 assert.strictEqual(f.OPOINT_KJOR_SEND_EPOST, false);
@@ -64,7 +64,7 @@ assert.ok(A.every(x => !x.searchterm.includes('header:')));
 const alle = f.opoint_kj_byggAlleSporringer(f.OPOINT_T2_SPORRINGER);
 const antD = f.opoint_kj_byggStromD().length;
 assert.strictEqual(alle.length, 13 + 10 + 1 + antD);
-assert.ok(alle[alle.length - 1].searchterm.endsWith('AND site:19526,18139,338722,141703')); // ukjente → D2, 288 fast D1
+assert.ok(alle[alle.length - 1].searchterm.endsWith('AND site:338722,141703')); // konfigurerte domener: 64/19526/18139 i D1
 
 // --- Mock-klient ---
 function klient(svarFn, maks) {
@@ -76,9 +76,9 @@ const ok = (docs, c) => ({ status: 200, tekst: JSON.stringify({ searchresult: { 
 const doc = o => Object.assign({ id_site: 1, id_article: 1, unix_timestamp: 1763450000, header: { text: 'x' }, summary: { text: 's' } }, o);
 
 // --- Strøm D-verifisering ---
-let res = { dokumenter: [doc({ id_site: 288 }), doc({ id_site: 19526 })], feil: '', merknad: '' };
+let res = { dokumenter: [doc({ id_site: 64 }), doc({ id_site: 19526 })], feil: '', merknad: '' };
 f.opoint_kj_verifiserSites(res); assert.ok(res.merknad.includes('bekreftet'));
-res = { dokumenter: [doc({ id_site: 288 }), doc({ id_site: 5 })], feil: '', merknad: '' };
+res = { dokumenter: [doc({ id_site: 64 }), doc({ id_site: 5 })], feil: '', merknad: '' };
 f.opoint_kj_verifiserSites(res); assert.ok(res.feil.includes('ikke bekreftet')); assert.strictEqual(res.dokumenter.length, 0);
 res = { dokumenter: [], feil: '', merknad: '' };
 f.opoint_kj_verifiserSites(res); assert.strictEqual(res.feil, ''); assert.ok(res.merknad.includes('0 dokumenter')); // steg 1: ikke feil
@@ -235,29 +235,31 @@ console.log('Alle OpointKjoring-tester OK');
 
   // D-tilordning fra forrige kjøring
   const data = [['Vindu', 'x'], ['KI'], [''], ['Strøm(mer)', 'Dato', 'id_site', 'Domene'],
-    ['D', '', 288, 'skipsrevyen.no'], ['D', '', 288, 'skipsrevyen.no'], ['D', '', 19526, 'www.maritimt.com'],
+    ['D', '', 64, 'skipsrevyen.no'], ['D', '', 64, 'skipsrevyen.no'], ['D', '', 19526, 'www.maritimt.com'],
     ['D', '', 338722, 'logistikkinside.no'], ['D', '', 141703, 'energiogklima.no']];
   const sd = f.opoint_kj_siteDomenerFraRader(data);
-  assert.deepStrictEqual(J(sd), { '288': 'skipsrevyen.no', '19526': 'maritimt.com', '338722': 'logistikkinside.no', '141703': 'energiogklima.no' });
+  assert.deepStrictEqual(J(sd), { '64': 'skipsrevyen.no', '19526': 'maritimt.com', '338722': 'logistikkinside.no', '141703': 'energiogklima.no' });
   const tl = f.opoint_kj_tilordneD(sd);
-  assert.deepStrictEqual(J(tl.map(t => t.id + t.gruppe)), ['288D1', '19526D1', '18139D2', '338722D2', '141703D2']);
-  // Rettelse c: 288 er D1 også med annet/ukjent domene
-  const tlFast = f.opoint_kj_tilordneD({ '288': 'annet.no' });
+  // 18139 ikke sett i forrige kjøring → konfigurert domene kystmagasinet.no → D1
+  assert.deepStrictEqual(J(tl.map(t => t.id + t.gruppe)), ['64D1', '19526D1', '18139D1', '338722D2', '141703D2']);
+  assert.ok(tl[2].kilde.includes('konfigurasjon'));
+  // 64 er fast D1 også med annet domene
+  const tlFast = f.opoint_kj_tilordneD({ '64': 'annet.no' });
   assert.strictEqual(tlFast[0].gruppe, 'D1'); assert.ok(tlFast[0].kilde.includes('fast'));
-  assert.ok(tl[2].domene.includes('ukjent'));
+  assert.ok(tl[2].domene.includes('fra konfigurasjon'));
 
   // D-spørringer: maks 15 ord, riktig site-liste
   const D = f.opoint_kj_byggStromD(tl);
   const ord = s => s.replace(/site:\S+/, '').replace(/\b(AND|OR)\b|[()"]/g, ' ').trim().split(/\s+/).length;
   D.forEach(x => assert.ok(ord(x.searchterm) <= 15, x.searchterm));
-  assert.ok(D.filter(x => x.navn.startsWith('D1')).every(x => x.searchterm.endsWith('AND site:288,19526')));
-  assert.ok(D.filter(x => x.navn.startsWith('D2')).every(x => x.searchterm.endsWith('AND site:18139,338722,141703') &&
+  assert.ok(D.filter(x => x.navn.startsWith('D1')).every(x => x.searchterm.endsWith('AND site:64,19526,18139')));
+  assert.ok(D.filter(x => x.navn.startsWith('D2')).every(x => x.searchterm.endsWith('AND site:338722,141703') &&
     x.searchterm.includes('AND (skip* OR fartøy* OR ferge* OR ferje* OR rederi* OR havn* OR maritim*)')));
   const alleTema = D.filter(x => x.navn.startsWith('D1')).map(x => x.searchterm).join(' ');
   f.OPOINT_KJOR_D_TEMAORD.forEach(t => assert.ok(alleTema.includes(t), t));
   assert.ok(alleTema.includes('"EU ETS"') && alleTema.includes('"Maritime CleanTech"'));
-  // Ukjent domene → D2 (unntatt fast D1 for 288)
-  assert.deepStrictEqual(J(f.opoint_kj_tilordneD({}).map(t => t.gruppe)), ['D1', 'D2', 'D2', 'D2', 'D2']);
+  // Ingen data fra forrige kjøring → konfigurerte domener avgjør
+  assert.deepStrictEqual(J(f.opoint_kj_tilordneD({}).map(t => t.gruppe)), ['D1', 'D1', 'D1', 'D2', 'D2']);
 
   // Verifisering per gruppe, 0 dokumenter er ikke feil
   let rv = { dokumenter: [doc({ id_site: 288 })], feil: '', merknad: '' };
@@ -275,8 +277,8 @@ console.log('Alle OpointKjoring-tester OK');
       return ok([doc({ header: { text: 'GASS completes final Business Plan ahead of project conclusion' } }), doc({ id_article: 9, header: { text: 'StealthGas Q3 results (NASDAQ: GASS)' } })]);
     if (b.searchterm.startsWith('GASS AND') && b.params.oldest === 3) return ok([doc({ header: { text: 'GASS completes final Business Plan ahead of project conclusion' } })]);
     if (b.searchterm.startsWith('GASS AND')) return ok([]);
-    if (b.searchterm.startsWith('site:')) return ok([doc({ id_site: 288 }), doc({ id_site: 288, id_article: 2 })]);
-    if (b.searchterm.includes('site:288')) return ok([doc({ id_site: 288 })]);
+    if (b.searchterm.startsWith('site:')) return ok([doc({ id_site: 64 }), doc({ id_site: 64, id_article: 2 })]);
+    if (b.searchterm.includes('site:64')) return ok([doc({ id_site: 64 })]);
     return ok([]);
   }, 60);
   const oppsett = { tier2: t2, tilordningD: tl, merknader: [] };
@@ -335,9 +337,29 @@ console.log('Steg 1-tester OK');
     { sokeord: 'TrAM', tier: 2, kontekstord: ['hurtigferge'] }]);
   const mu = klient(() => ok([doc({})]), 20);
   const ru = f.opoint_kj_kjorUke(mu.kl, t2, { oldest: 1, newest: 2 }, () => false);
-  assert.strictEqual(ru.length, 3); assert.strictEqual(ru[0].dokumenter.length, 1);
-  assert.ok(ru[2].feil.includes('zero-emission zone'));
+  assert.strictEqual(ru[0].dokumenter.length, 1);
+  assert.strictEqual(ru.length, 5); // FLAGSHIPS, TrAM, Apollo, AWESOME, zero-emission zone
+  assert.ok(ru[2].feil.includes('Apollo') && ru[4].feil.includes('zero-emission zone'));
   assert.strictEqual(mu.kall.length, 2);
-  assert.ok(f.opoint_kj_byggRaderUke(ru, { oldest: 1, newest: 2 }, mu.kl, d).length === 6);
+  assert.strictEqual(f.opoint_kj_byggRaderUke(ru, { oldest: 1, newest: 2 }, mu.kl, d).length, 8);
+  assert.strictEqual(f.OPOINT_KJ_UKE_DAGER, 30);
+
+  // Rettelse a: kontroll av D-id-er mot forrige kjøring
+  const kd = f.opoint_kj_kontrollerDIder([['Vindu'], [''], [''], ['Strøm(mer)', 'Tittel', 'id_site', 'Domene'],
+    ['C', 'Brann i ladetårn ved ferjekai', 64, 'skipsrevyen.no'], ['D', 'X', 19526, 'maritimt.com'],
+    ['D', 'Y', 999, 'logistikkinside.no']]);
+  assert.deepStrictEqual(J(kd.kilder.map(k => k.status)), ['OK', 'OK', 'ikke sett i forrige kjøring', 'AVVIK', 'ikke sett i forrige kjøring']);
+  assert.strictEqual(kd.kontrolltittel[0].id_site, '64');
+  // D1-kjøring i to vinduer, Skipsrevyen markeres
+  const md = klient(b => ok([doc({ id_site: 64, url_common: 'skipsrevyen.no', header: { text: 'Ferje' } })]), 30);
+  const tlD = f.opoint_kj_tilordneD({});
+  const d1 = f.opoint_kj_byggStromD(tlD).filter(x => x.navn.startsWith('D1'));
+  const kj = [];
+  [{ navn: 'dag', v: { oldest: 1, newest: 2 } }, { navn: 'hist', v: { oldest: 3, newest: 4 } }].forEach(vi => d1.forEach(sp => {
+    const r = f.opoint_kj_hentSporring(md.kl, sp, vi.v, 25, 4, true); f.opoint_kj_verifiserSites(r, sp.verifiserSites); r.vinduNavn = vi.navn; kj.push(r);
+  }));
+  const rd = f.opoint_kj_byggRaderTestD(kd, tlD, kj, [], md.kl, d);
+  assert.ok(rd.some(r => r[2] === 'JA' && r[3] === 64));
+  assert.strictEqual(md.kall.length, 2 * d1.length);
 })();
 console.log('Rettelse d + steg 2-tester OK');
