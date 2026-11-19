@@ -1096,3 +1096,29 @@ console.log('DEL 1 KI-feil OK');
   assert.ok(rad[0].some(x => String(x).startsWith('50 % (1/2) – mangler: Y')));
 })();
 console.log('DEL 3d–e, 4, rapport og recall OK');
+
+// ===================== DEL A2 og A4 =====================
+(function () {
+  // A4: ingress fra gruppen
+  const utenIngress = doc({ id_article: 1, orig_url: 'https://wpo.org/1', header: { text: 'Shipping coalition urges net-zero framework adoption' }, summary: { text: '' }, language: { text: 'en' },
+    identical_documents: { cnt: 1, document: [doc({ id_article: 9, orig_url: 'https://kopi.com/1', summary: { text: 'Koalisjonen ber IMO vedta rammeverket' } })] } });
+  const k = f.opoint_kj_dedup([{ strom: 'B', navn: 'B', searchterm: 'b', dokumenter: [utenIngress] }], [], null, false, true); // uten utvidelse: kopien ligger bare i identical_documents
+  const sak = f.opoint_kj_lagSaker(k, null)[0];
+  assert.deepStrictEqual(J(f.opoint_kj_sakIngress(sak)), { tekst: 'Koalisjonen ber IMO vedta rammeverket', fra: 'kopi.com' });
+  assert.strictEqual(f.opoint_kj_visSakIngress(sak), 'Koalisjonen ber IMO vedta rammeverket…');
+  assert.ok(f.opoint_kj_kiBrukerTekst(sak.representant, sak).includes('Ingress: Koalisjonen ber IMO'));
+  const tom = f.opoint_kj_lagSaker(f.opoint_kj_dedup([{ strom: 'B', navn: 'B', searchterm: 'b', dokumenter: [doc({ orig_url: 'https://t.no/1', summary: { text: '' } })] }], []), null)[0];
+  assert.deepStrictEqual(J(f.opoint_kj_sakIngress(tom)), { tekst: '', fra: '' });
+  assert.ok(!f.opoint_kj_kiBrukerTekst(tom.representant, tom).includes('Ingress:'));
+
+  // A2: «Ellers i bransjen» – setning som tekst, (Kilde) som lenke
+  const inn = [{ nr: 1, sak: 'S1', tittel: 'T', ingress: 'I', url: 'https://mj.com/a', kilde: 'Maritime Journal' }];
+  const t = f.opoint_kj_tolkSammendrag('{"setninger": [{"tekst": "Acta Marine bestiller fire CSOV-er.", "sak": 1}]}', inn);
+  assert.strictEqual(t[0].kilde, 'Maritime Journal');
+  const ep = f.opoint_kj_byggEpost([], { setninger: t, inndata: inn }, { oldest: 1, newest: 2 }, String, false, {}, []);
+  assert.ok(ep.html.includes('Acta Marine bestiller fire CSOV-er. (<a href="https://mj.com/a"'));
+  assert.ok(ep.html.includes('>Maritime Journal</a>)'));
+  assert.ok(!/<a [^>]*>Acta Marine/.test(ep.html)); // setningen er ikke lenke
+  assert.ok(ep.tekst.includes('Acta Marine bestiller fire CSOV-er. (Maritime Journal: https://mj.com/a)'));
+})();
+console.log('DEL A2 og A4 OK');

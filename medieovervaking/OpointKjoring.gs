@@ -1268,11 +1268,42 @@ function opoint_kj_kiSystem(vindu) {
     'Ta med alle sakene. Bruk aldri doble anførselstegn (") inne i tekstverdiene – bruk «» i stedet.';
 }
 
-/** Teksten for én sak (uten «SAK n»-linjen). Ingress ordrett; tom ingress → bare overskrift (og kilde). */
-function opoint_kj_kiBrukerTekst(k) {
+/**
+ * A4: ingress for en sak. Representantens egen ingress hvis den finnes; ellers
+ * første ikke-tomme ingress blant gruppens øvrige artikler (medlemmer i
+ * prioritetsrekkefølge, dokumenter dedupen har slått inn, og identical_documents).
+ * Returnerer {tekst, fra} der fra er domenet ingressen er hentet fra ('' = egen).
+ */
+function opoint_kj_sakIngress(sak) {
+  var rep0 = sak.representant;
+  var egen = opoint_kj_ingress(rep0.doc);
+  if (egen) return { tekst: egen, fra: '' };
+  var kilder = [];
+  sak.medlemmer.slice().sort(opoint_kj_representantSortering).forEach(function (m) {
+    kilder.push({ doc: m.doc, domene: m.domene });
+    (m.slattSammen || []).forEach(function (x) { kilder.push({ doc: x.doc, domene: x.domene }); });
+    var idd = m.doc.identical_documents && Array.isArray(m.doc.identical_documents.document) ? m.doc.identical_documents.document : [];
+    idd.forEach(function (x) { kilder.push({ doc: x, domene: opoint_kj_domene(x) }); });
+  });
+  for (var i = 0; i < kilder.length; i++) {
+    var t = opoint_kj_ingress(kilder[i].doc);
+    if (t) return { tekst: t, fra: kilder[i].domene || '(ukjent)' };
+  }
+  return { tekst: '', fra: '' };
+}
+
+/** Visning av sakens ingress: «…» hvis den ikke slutter på . ! ? … (som opoint_kj_visIngress). */
+function opoint_kj_visSakIngress(sak) {
+  var t = opoint_kj_sakIngress(sak).tekst;
+  if (!t) return '';
+  return opoint_kj_visIngress({ summary: { text: t } });
+}
+
+/** Teksten for én sak (uten «SAK n»-linjen). Ingress ordrett (A4: fra gruppen hvis representanten mangler); tom → bare overskrift (og kilde). */
+function opoint_kj_kiBrukerTekst(k, sak) {
   var fs = k.doc.first_source || {};
   var kilde = fs.sitename || fs.name || k.domene || '';
-  var ingress = opoint_kj_ingress(k.doc);
+  var ingress = sak ? opoint_kj_sakIngress(sak).tekst : opoint_kj_ingress(k.doc);
   return 'Overskrift: ' + opointTekstFelt(k.doc.header).replace(/\s+/g, ' ').trim() + (ingress ? '\nIngress: ' + ingress : '') +
     (kilde ? '\nKilde: ' + kilde : '');
 }
@@ -1406,7 +1437,7 @@ function opoint_kj_vurderSaker(saker, oppsett, tjeneste, reserver, vindu) {
       r.kategori = opoint_kj_kategoriFraSokeord(fastNavn, oppsett.sokeord);
       if (r.kategori) { r.kilde += ', kategori fra Søkeord'; return; }
     }
-    var tekst = opoint_kj_kiBrukerTekst(sak.representant);
+    var tekst = opoint_kj_kiBrukerTekst(sak.representant, sak);
     r.tegn = tekst.length;
     trengerKi.push({ sak: sak, tekst: tekst });
   });
@@ -1667,7 +1698,8 @@ function opoint_kj_byggRaderSaker(forb, saker, vindu, ki, d, ekstra) {
   viste.forEach(function (sak) {
     var r = sak.representant, doc = r.doc, ts = doc.unix_timestamp, kr = sak.kiResultat || {};
     rader.push([sak.id, sak.strommer.join(', '), typeof ts === 'number' ? d.fmtSek(ts) : '', opointTekstFelt(doc.header),
-      opoint_t3_artikkelUrl(doc), opoint_kj_visIngress(doc), opoint_language(doc.language), r.domene, r.niva, r.apen,
+      opoint_t3_artikkelUrl(doc), opoint_kj_visSakIngress(sak) + (opoint_kj_sakIngress(sak).fra ? ' [ingress fra ' + opoint_kj_sakIngress(sak).fra + ']' : ''),
+      opoint_language(doc.language), r.domene, r.niva, r.apen,
       sak.antallTilsvarende, sak.andreKilder, opoint_kj_kiTekst(sak.kiResultat), kr.kategori || '',
       kr.relevant === null || kr.relevant === undefined ? '' : (kr.nevnerOss ? 'ja' : 'nei'), kr.notat || '',
       kr.irrelevantGrunn || '', opoint_kj_ingressHarSokeord(r) ? 'ja' : 'nei', kr.tegn || '',
@@ -1811,8 +1843,8 @@ function opoint_kj_sammendragInndata(saker) {
     return !s.sprakEkskludert && !s.oppfolging && s.kiResultat && s.kiResultat.relevant === true && (s.kiResultat.prioritet || 'middels') === 'middels';
   }).map(function (s, i) {
     var doc = s.representant.doc;
-    return { nr: i + 1, sak: s.id, tittel: opointTekstFelt(doc.header).replace(/\s+/g, ' ').trim(), ingress: opoint_kj_ingress(doc),
-      url: opoint_t3_artikkelUrl(doc) };
+    return { nr: i + 1, sak: s.id, tittel: opointTekstFelt(doc.header).replace(/\s+/g, ' ').trim(), ingress: opoint_kj_sakIngress(s).tekst,
+      url: opoint_t3_artikkelUrl(doc), kilde: opoint_kj_kildeNavn(s.representant) };
   });
 }
 
@@ -1830,7 +1862,7 @@ function opoint_kj_tolkSammendrag(tekst, inndata) {
     var w = t.split(' ').length;
     if (ord + w > OPOINT_KJ_SAMMENDRAG_MAKS_ORD) break;
     ord += w;
-    ut.push({ tekst: t, nr: n, url: kilde.url, sak: kilde.sak });
+    ut.push({ tekst: t, nr: n, url: kilde.url, sak: kilde.sak, kilde: kilde.kilde || '' });
   }
   return ut;
 }
@@ -1913,7 +1945,7 @@ function opoint_kj_byggEpost(saker, sm, vindu, fmtSek, harLogo, st, resultater) 
     if (r.relevant) antHoy++;
     (treffPerKategori[kat] = treffPerKategori[kat] || []).push({
       tittel: opointTekstFelt(k.doc.header).replace(/\s+/g, ' ').trim(), lenke: opoint_t3_artikkelUrl(k.doc),
-      ingress: opoint_kj_visIngress(k.doc), kilde: opoint_kj_kildeNavn(k), matchendeOrd: opoint_kj_sokeordFor(sak),
+      ingress: opoint_kj_visSakIngress(sak), kilde: opoint_kj_kildeNavn(k), matchendeOrd: opoint_kj_sokeordFor(sak),
       aiRelevant: r.relevant, aiKategori: r.kategori, aiNevnerOss: !!r.nevnerOss, aiNotat: notat.join(' · '),
       aiIrrelevantGrunn: r.irrelevantGrunn || '', aiSammendrag: '' });
   });
@@ -1930,10 +1962,13 @@ function opoint_kj_byggEpost(saker, sm, vindu, fmtSek, harLogo, st, resultater) 
       '<div style="font-size:18px;line-height:24px;font-weight:bold;color:' + MC_DEEP_BLUE + ';margin:0 0 4px 0;">Ellers i bransjen</div></td></tr>' +
       '<tr><td bgcolor="' + MC_BAKGRUNN_KORT + '" style="background-color:' + MC_BAKGRUNN_KORT + ';padding:8px 32px 20px 32px;' + font +
       'font-size:16px;line-height:22px;color:' + MC_DEEP_BLUE_700 + ';">' +
-      sm.setninger.map(function (x) { return '<a href="' + escapeAttributt(x.url) + '" style="color:' + MC_DEEP_BLUE_700 + ';">' + escapeHtml(x.tekst) + '</a>'; }).join(' ') +
+      sm.setninger.map(function (x) {
+        return escapeHtml(x.tekst) + ' (<a href="' + escapeAttributt(x.url) + '" style="color:' + MC_INNOVATION_BLUE +
+          ';text-decoration:none;">' + escapeHtml(x.kilde || 'kilde') + '</a>)';
+      }).join(' ') +
       '</td></tr>';
     tekstEkstra.push('', '== Ellers i bransjen ==');
-    sm.setninger.forEach(function (x) { tekstEkstra.push(x.tekst + ' (' + x.url + ')'); });
+    sm.setninger.forEach(function (x) { tekstEkstra.push(x.tekst + ' (' + (x.kilde || 'kilde') + ': ' + x.url + ')'); });
   }
   var smaa = [];
   if (lav > 0) smaa.push(lav + ' øvrige treff i arkfanen.');
