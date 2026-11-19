@@ -630,7 +630,7 @@ console.log('Vakt mot direkte kjøring OK');
   assert.strictEqual(g3.reddet, 1); assert.deepStrictEqual(J(g3.grupper), [[0, 1]]); assert.ok(g3.melding.includes('reddet'));
   const tj4 = lagTj(() => 'beklager');
   const g4 = f.opoint_kj_grupperSaker(mange.slice(0, 5), tj4);
-  assert.strictEqual(tj4.kallListe.length, 2); assert.strictEqual(g4.grupper.length, 0);
+  assert.strictEqual(tj4.kallListe.length, 6); assert.strictEqual(g4.grupper.length, 0); // 2 for bolken + 2×2 for halvdelene (del 1c)
 
   // Nytt forsøk ved parsefeil i relevans: reddet og tvil telles
   const kand = [0, 1].map(i => ({ doc: doc({ id_article: i, header: { text: 'Sak ' + i }, summary: { text: 'Ingress ' + i } }),
@@ -927,3 +927,71 @@ console.log('Del 1-tester OK');
   assert.ok(rv.some(r => r[0] === 'S211' && r[1] === '(finnes ikke i denne kjøringen)'));
 })();
 console.log('Tillegg 2–4 og del 2–4 OK');
+
+// ===================== DEL 1: KI-feil =====================
+(function () {
+  const props = { ANTHROPIC_API_KEY: 'sk-HEMMELIG', AI_MODEL: 'claude-haiku-5-5' };
+  const lagTj = (svarFn, opts) => {
+    const kall = [];
+    const t = f.opoint_kj_lagKiTjeneste(80, Date.now(), { props: { getProperty: n => props[n] }, cache: (opts && opts.cache) || null, hash: x => x,
+      fetchMange: bodies => bodies.map(b => { kall.push(b); const r = svarFn(b, kall.length);
+        return { status: 200, tekst: JSON.stringify({ content: [{ type: 'text', text: r.t }], stop_reason: r.s || 'end_turn', usage: { input_tokens: 111, output_tokens: 22 } }) }; }),
+      fetch: b => { kall.push(b); const r = svarFn(b, kall.length);
+        return { status: 200, tekst: JSON.stringify({ content: [{ type: 'text', text: r.t }], stop_reason: r.s || 'end_turn', usage: { input_tokens: 111, output_tokens: 22 } }) }; } });
+    t.kallListe = kall; return t;
+  };
+  // 1b: robust tolking
+  assert.strictEqual(f.opoint_kj_parseJson('{"relevant": false, "irrelevant_grunn": "Om "Viking" cruise"}').irrelevant_grunn, 'Om "Viking" cruise');
+  assert.strictEqual(f.opoint_kj_parseJson('```json\n{"a": 1}\n```').a, 1);
+  assert.strictEqual(f.opoint_kj_parseJson('Svar: {"a": "linje\nto"} takk').a, 'linje\nto');
+  assert.strictEqual(f.opoint_kj_parseJson('{"grupper": [[1, 2], [3'), null);
+  assert.ok(f.opoint_kj_kiSystem().includes('Bruk aldri doble anførselstegn'));
+
+  // 1a: metadata og logging; relevans avkortet → nytt forsøk med dobbel max_tokens
+  const docs = [0, 1].map(i => doc({ id_article: i, orig_url: 'https://n.no/' + i, header: { text: 'Sak ' + i }, language: { text: 'no' } }));
+  const k = f.opoint_kj_dedup([{ strom: 'B', navn: 'B', searchterm: 'b', dokumenter: docs }], []);
+  const saker = f.opoint_kj_lagSaker(k, null);
+  const tj = lagTj((b, n) => {
+    if (b.messages[0].content.includes('Sak 0') && b.max_tokens === 400) return { t: '{"relevant": true, "kategori": "Annet", "notat": "kuttet midt', s: 'max_tokens' };
+    return { t: '{"relevant": true, "kategori": "Annet", "prioritet": "middels", "notat": ""}' };
+  });
+  const ki = f.opoint_kj_vurderSaker(saker, { sokeord: [] }, tj, 1);
+  assert.strictEqual(ki.reddet, 1); assert.strictEqual(tj.kiFeil.length, 1);
+  const fe = tj.kiFeil[0];
+  assert.ok(fe.kall.startsWith('relevans/prioritet')); assert.strictEqual(fe.stopReason, 'max_tokens');
+  assert.strictEqual(fe.inputTokens, 111); assert.strictEqual(fe.outputTokens, 22); assert.strictEqual(fe.maxTokens, 400);
+  assert.ok(fe.raa.includes('kuttet midt'));
+  assert.ok(tj.kallListe.some(b => b.max_tokens === 800));
+  const rader = f.opoint_kj_kiFeilRader([Object.assign({}, fe, { raa: 'x'.repeat(60000) })]);
+  assert.ok(rader[0][8].length < 50000 && rader[0][8].includes('[kuttet, 60000 tegn]')); assert.strictEqual(rader[0].length, 9);
+
+  // Gruppering: avkortet svar → ikke nytt likt forsøk, men oppdeling i to
+  const mange = Array.from({ length: 6 }, (_, i) => ({ doc: doc({ id_article: i, header: { text: 'T' + i } }), ekskludert: false, niva: 3, apen: 'ukjent', domene: 'd' + i + '.no', strommer: ['B'] }));
+  const tg = lagTj((b) => {
+    const n = b.messages[0].content.split('\n').length;
+    return n === 6 ? { t: '{"grupper": [[1, 2], [3', s: 'max_tokens' } : { t: '{"grupper": [[1, 2]]}' };
+  });
+  const g = f.opoint_kj_grupperSaker(mange, tg);
+  assert.strictEqual(tg.kallListe.length, 3); // hel bolk (avkortet) + to halvdeler, ingen likt nytt forsøk
+  assert.deepStrictEqual(J(g.grupper), [[0, 1], [3, 4]]);
+  assert.ok(g.melding.includes('delt i to (2 av 2 deler gruppert)'));
+  assert.strictEqual(tg.kiFeil.length, 1); assert.ok(tg.kiFeil[0].kall.startsWith('gruppering'));
+
+  // Sammendrag: parsefeil to ganger → logget to ganger, e-post uten seksjonen
+  const s3 = [0, 1].map(i => ({ id: 'S' + i, sprakEkskludert: '', kiResultat: { relevant: true, prioritet: 'middels' }, representant: { doc: doc({ id_article: i, orig_url: 'https://m.no/' + i }) } }));
+  const ts = lagTj(() => ({ t: 'Beklager, jeg kan ikke.' }));
+  const sm = f.opoint_kj_lagSammendrag(s3, ts);
+  assert.strictEqual(sm.setninger.length, 0); assert.ok(sm.melding.includes('uten «Ellers i bransjen»'));
+  assert.strictEqual(ts.kiFeil.length, 2); assert.strictEqual(ts.kiFeil[1].forsok, 2);
+
+  // Buffer lagrer metadata; eldre buffer (ren tekst) tåles
+  const buf = {}; const cache = { get: k2 => buf[k2] || null, put: (k2, v) => { buf[k2] = v; } };
+  const tb = lagTj(() => ({ t: '{"ok": 1}', s: 'end_turn' }), { cache });
+  tb.spor('x', 'sys', 'a', 400);
+  const r2 = tb.spor('x', 'sys', 'a', 400);
+  assert.strictEqual(r2.fraBuffer, true); assert.strictEqual(r2.stopReason, 'end_turn'); assert.strictEqual(r2.inputTokens, 111);
+  buf['opk:y:claude-haiku-5-5:sys\nb'] = '{"ok": 2}';
+  const r3 = tb.spor('y', 'sys', 'b', 400);
+  assert.strictEqual(r3.tekst, '{"ok": 2}'); assert.strictEqual(r3.stopReason, '');
+})();
+console.log('DEL 1 KI-feil OK');

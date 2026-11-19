@@ -625,8 +625,9 @@ function opoint_kjor() {
   opoint_kj_skrivKjoring(ss, forb, saker, vindu, ki, d, apiKey, ekstra);
 
   if (OPOINT_KJOR_KI_AKTIV) {
+    var tjeneste = null;
     try {
-      var tjeneste = opoint_kj_lagKiTjeneste(OPOINT_KJOR_MAKS_KI_KALL, startMs);
+      tjeneste = opoint_kj_lagKiTjeneste(OPOINT_KJOR_MAKS_KI_KALL, startMs);
       var grupper = opoint_kj_grupperSaker(forb.kandidater, tjeneste);
       saker = opoint_kj_lagSaker(forb.kandidater, grupper);
       opoint_kj_settDagensEpost(saker, forb.apps, vindu, d.dagTekst);
@@ -646,6 +647,7 @@ function opoint_kjor() {
     } catch (e) {
       ki.melding = 'Uventet feil i KI-/e-poststeget: ' + opointMaskerNokkel(String(e && e.message ? e.message : e), apiKey);
     }
+    try { if (tjeneste) ekstra.kiFeil = opoint_kj_skrivKiFeil(ss, tjeneste); } catch (e) { Logger.log('KI-feil-fanen: ' + e.message); }
     opoint_kj_skrivKjoring(ss, forb, saker, vindu, ki, d, apiKey, ekstra);
   }
   Logger.log('opoint_kjor: ' + forb.klient.antall() + ' HTTP-kall, ' + forb.kandidater.length + ' artikler, ' +
@@ -790,13 +792,36 @@ function opoint_kj_lagKiTjeneste(maksKall, startMs, avh) {
   };
   var naa = a.naa || function () { return Date.now(); };
   var t = { modell: modell, kall: 0, fraBuffer: 0, kostnad: 0, feil: [], stoppet: '', maksKall: maksKall,
-    klar: !!(apiKey && modell) };
+    klar: !!(apiKey && modell), kiFeil: [] };
+  // Bufferen lagrer svaret med metadata (stop_reason, tokens) som JSON; eldre oppføringer er ren tekst.
+  var lesBuffer = function (nokkel) {
+    if (!cache) return null;
+    try {
+      var c = cache.get(nokkel);
+      if (!c) return null;
+      var o = null;
+      try { o = JSON.parse(c); } catch (e) { o = null; }
+      if (o && typeof o === 'object' && typeof o.t === 'string') {
+        return { ok: true, tekst: o.t, fraBuffer: true, stopReason: o.s || '', inputTokens: o.i, outputTokens: o.o, maxTokens: o.m };
+      }
+      return { ok: true, tekst: c, fraBuffer: true, stopReason: '', inputTokens: '', outputTokens: '', maxTokens: '' };
+    } catch (e) { return null; }
+  };
+  var skrivBuffer = function (nokkel, r) {
+    if (!cache || !r.tekst) return;
+    try { cache.put(nokkel, JSON.stringify({ t: r.tekst, s: r.stopReason, i: r.inputTokens, o: r.outputTokens, m: r.maxTokens }), 21600); } catch (e) { /* for stor */ }
+  };
+  /** Del 1a: registrer en parsefeil (skrives til fanen «KI-feil» av opoint_kj_skrivKiFeil). */
+  t.loggParseFeil = function (kall, res, forsok) {
+    t.kiFeil.push({ tid: new Date(), kall: kall, forsok: forsok || 1, raa: res && res.tekst !== undefined ? String(res.tekst) : '',
+      stopReason: res ? (res.stopReason || '') : '', inputTokens: res ? res.inputTokens : '', outputTokens: res ? res.outputTokens : '',
+      maxTokens: res ? res.maxTokens : '', fraBuffer: !!(res && res.fraBuffer) });
+  };
   /** Returnerer {ok, tekst, fraBuffer, feil}. */
   t.spor = function (type, system, brukerTekst, maxTokens) {
     var nokkel = 'opk:' + type + ':' + modell + ':' + hash(system + '\n' + brukerTekst);
-    if (cache) {
-      try { var c = cache.get(nokkel); if (c) { t.fraBuffer++; return { ok: true, tekst: c, fraBuffer: true }; } } catch (e) { /* ingen buffer */ }
-    }
+    var fraB = lesBuffer(nokkel);
+    if (fraB) { t.fraBuffer++; return fraB; }
     if (!t.klar) return { ok: false, feil: 'ANTHROPIC_API_KEY og/eller AI_MODEL mangler i Script Properties.' };
     if (t.stoppet) return { ok: false, feil: t.stoppet };
     if (t.kall >= maksKall) { t.stoppet = 'KI-kalltaket (' + maksKall + ') nådd.'; return { ok: false, feil: t.stoppet }; }
@@ -819,9 +844,11 @@ function opoint_kj_lagKiTjeneste(maksKall, startMs, avh) {
       var k = beregnKostnad(modell, json.usage.input_tokens, json.usage.output_tokens);
       if (typeof k === 'number') t.kostnad += k;
     }
-    var tekst = hentForsteTekstBlokk(json);
-    if (cache && tekst) { try { cache.put(nokkel, tekst, 21600); } catch (e) { /* for stor for bufferen */ } }
-    return { ok: true, tekst: tekst, fraBuffer: false };
+    var r = { ok: true, tekst: hentForsteTekstBlokk(json), fraBuffer: false, stopReason: (json && json.stop_reason) || '',
+      inputTokens: json && json.usage ? json.usage.input_tokens : '', outputTokens: json && json.usage ? json.usage.output_tokens : '',
+      maxTokens: maxTokens };
+    skrivBuffer(nokkel, r);
+    return r;
   };
   /**
    * Flere kall, OPOINT_KJ_KI_PARALLELT om gangen (UrlFetchApp.fetchAll), med samme
@@ -841,9 +868,8 @@ function opoint_kj_lagKiTjeneste(maksKall, startMs, avh) {
     var ut = [], ko = [];
     oppgaver.forEach(function (o, i) {
       var nokkel = 'opk:' + o.type + ':' + modell + ':' + hash(o.system + '\n' + o.tekst);
-      if (cache) {
-        try { var c = cache.get(nokkel); if (c) { t.fraBuffer++; ut[i] = { ok: true, tekst: c, fraBuffer: true }; return; } } catch (e) { /* ingen buffer */ }
-      }
+      var fraB = lesBuffer(nokkel);
+      if (fraB) { t.fraBuffer++; ut[i] = fraB; return; }
       ko.push({ i: i, nokkel: nokkel, body: { model: modell, max_tokens: o.maxTokens, system: o.system, messages: [{ role: 'user', content: o.tekst }] } });
     });
     for (var s = 0; s < ko.length; s += OPOINT_KJ_KI_PARALLELT) {
@@ -868,9 +894,11 @@ function opoint_kj_lagKiTjeneste(maksKall, startMs, avh) {
           ut[q.i] = { ok: false, feil: 'HTTP ' + svar.status + ': ' + opointMaskerNokkel(m, apiKey) }; return;
         }
         if (json && json.usage) { var k = beregnKostnad(modell, json.usage.input_tokens, json.usage.output_tokens); if (typeof k === 'number') t.kostnad += k; }
-        var tekst = hentForsteTekstBlokk(json);
-        if (cache && tekst) { try { cache.put(q.nokkel, tekst, 21600); } catch (e) { /* for stor */ } }
-        ut[q.i] = { ok: true, tekst: tekst, fraBuffer: false };
+        var r = { ok: true, tekst: hentForsteTekstBlokk(json), fraBuffer: false, stopReason: (json && json.stop_reason) || '',
+          inputTokens: json && json.usage ? json.usage.input_tokens : '', outputTokens: json && json.usage ? json.usage.output_tokens : '',
+          maxTokens: q.body.max_tokens };
+        skrivBuffer(q.nokkel, r);
+        ut[q.i] = r;
       });
       // Bit som ble kortere enn resten av køen pga. taket: resten får feil i neste runde
       if (bit.length < Math.min(OPOINT_KJ_KI_PARALLELT, ko.length - s)) {
@@ -884,6 +912,33 @@ function opoint_kj_lagKiTjeneste(maksKall, startMs, avh) {
 }
 
 var OPOINT_KJ_KI_PARALLELT = 5;
+
+/**
+ * Del 1a: legger tjenestens parsefeil til nederst i fanen «KI-feil» (opprettes ved
+ * behov, eldre rader beholdes). Rårespons lagres hel, men kuttes ved 49 000 tegn
+ * (grensen for én celle er 50 000).
+ */
+var OPOINT_KJ_FANE_KI_FEIL = 'KI-feil';
+function opoint_kj_skrivKiFeil(ss, tjeneste) {
+  if (!tjeneste || !tjeneste.kiFeil || !tjeneste.kiFeil.length) return 0;
+  var ark = ss.getSheetByName(OPOINT_KJ_FANE_KI_FEIL);
+  if (!ark) {
+    ark = ss.insertSheet(OPOINT_KJ_FANE_KI_FEIL);
+    ark.getRange(1, 1, 1, 9).setValues([['Tidspunkt', 'Kall', 'Forsøk', 'stop_reason', 'input_tokens', 'output_tokens',
+      'max_tokens', 'Fra buffer?', 'Rårespons (hele)']]);
+  }
+  var rader = opoint_kj_kiFeilRader(tjeneste.kiFeil);
+  ark.getRange(ark.getLastRow() + 1, 1, rader.length, 9).setValues(rader);
+  return rader.length;
+}
+
+function opoint_kj_kiFeilRader(liste) {
+  return liste.map(function (f) {
+    var raa = f.raa.length > 49000 ? f.raa.substring(0, 49000) + ' …[kuttet, ' + f.raa.length + ' tegn]' : f.raa;
+    return [f.tid, f.kall, f.forsok, f.stopReason || '(ukjent – fra eldre buffer)', f.inputTokens, f.outputTokens, f.maxTokens,
+      f.fraBuffer ? 'ja' : 'nei', raa];
+  });
+}
 
 // ---------------------------------------------------------------------
 // Steg 4a: saksgruppering med ett KI-kall per bolk på maks 150 titler
@@ -917,9 +972,48 @@ function opoint_kj_sakTekst(bolk) {
   }).join('\n');
 }
 
+/**
+ * Del 1b: robust JSON-tolking. 1) parseAiSvarJson (fjerner ```-gjerder, trekker ut
+ * første { … siste }). 2) Reparasjon: rå linjeskift/tab i tekstverdier escapes, og
+ * doble anførselstegn INNI en tekstverdi (ikke etterfulgt av , : } ] eller slutt)
+ * escapes. Returnerer objekt eller null. Avkortede svar (stop_reason = max_tokens)
+ * kan ikke repareres – de håndteres med nytt forsøk / oppdeling.
+ */
+function opoint_kj_parseJson(tekst) {
+  var o = parseAiSvarJson(tekst);
+  if (o) return o;
+  if (!tekst) return null;
+  var s = String(tekst), a = s.indexOf('{'), b = s.lastIndexOf('}');
+  if (a < 0 || b <= a) return null;
+  s = s.slice(a, b + 1);
+  var ut = '', iStreng = false;
+  for (var i = 0; i < s.length; i++) {
+    var c = s.charAt(i);
+    if (iStreng) {
+      if (c === '\\') { ut += c + s.charAt(i + 1); i++; continue; }
+      if (c === '\n') { ut += '\\n'; continue; }
+      if (c === '\r') { continue; }
+      if (c === '\t') { ut += '\\t'; continue; }
+      if (c === '"') {
+        var j = i + 1;
+        while (j < s.length && /\s/.test(s.charAt(j))) j++;
+        var neste = s.charAt(j);
+        if (neste === ',' || neste === ':' || neste === '}' || neste === ']' || j >= s.length) { iStreng = false; ut += c; }
+        else ut += '\\"';
+        continue;
+      }
+      ut += c;
+    } else {
+      if (c === '"') iStreng = true;
+      ut += c;
+    }
+  }
+  try { return JSON.parse(ut); } catch (e) { return null; }
+}
+
 /** Tolker grupperingssvaret. Ugyldige/dupliserte numre ignoreres. null ved parsefeil. */
 function opoint_kj_tolkGrupper(tekst, antall) {
-  var obj = parseAiSvarJson(tekst);
+  var obj = opoint_kj_parseJson(tekst);
   if (!obj || !Array.isArray(obj.grupper)) return null;
   var brukt = {}, ut = [];
   obj.grupper.forEach(function (g) {
@@ -935,29 +1029,51 @@ function opoint_kj_tolkGrupper(tekst, antall) {
 }
 
 /**
- * Én grupperingsrunde over en liste kandidatindekser (deles i bolker på maks
- * OPOINT_KJ_SAK_BOLK). Ved parsefeil prøves ett nytt kall før bolken gis opp.
- * Returnerer {grupper: [[indeks …]] (bare de med ≥ 2), bolker, meld, reddet, tapt}.
+ * Én grupperingsrunde over en liste kandidatindekser (deles i bolker på maks bolkStr).
+ * Ved svar som ikke kan tolkes (del 1c): feilen logges («KI-feil»), så ett nytt forsøk
+ * (hoppes over hvis svaret ble avkortet, stop_reason = max_tokens), og til slutt deles
+ * bolken i to halvdeler som grupperes hver for seg (saker på tvers av halvdelene slås
+ * da ikke sammen i denne runden). Returnerer {grupper, bolker, meld, reddet, tapt, delt}.
  */
 function opoint_kj_grupperRunde(ider, kandidater, tjeneste, type, etikett, bolkStr) {
   var str = bolkStr || OPOINT_KJ_SAK_BOLK;
-  var ut = { grupper: [], bolker: 0, meld: [], reddet: 0, tapt: 0 };
+  var ut = { grupper: [], bolker: 0, meld: [], reddet: 0, tapt: 0, delt: 0 };
+  var kallEn = function (bit, typ, navn) {
+    var tekst = opoint_kj_sakTekst(bit.map(function (i) { return kandidater[i]; }));
+    var svar = tjeneste.spor(typ, OPOINT_KJ_SAK_SYSTEM, tekst, OPOINT_KJ_SAK_MAX_TOKENS);
+    var g = svar.ok ? opoint_kj_tolkGrupper(svar.tekst, bit.length) : null;
+    if (svar.ok && !g) {
+      tjeneste.loggParseFeil('gruppering (' + navn + ')', svar, 1);
+      if (svar.stopReason !== 'max_tokens') {
+        svar = tjeneste.spor(typ + '2', OPOINT_KJ_SAK_SYSTEM, tekst, OPOINT_KJ_SAK_MAX_TOKENS);
+        g = svar.ok ? opoint_kj_tolkGrupper(svar.tekst, bit.length) : null;
+        if (svar.ok && !g) tjeneste.loggParseFeil('gruppering (' + navn + ')', svar, 2);
+        if (g) ut.reddet++;
+      }
+    }
+    return { svar: svar, g: g };
+  };
   for (var s = 0; s < ider.length; s += str) {
     var bit = ider.slice(s, s + str);
     ut.bolker++;
     if (bit.length < 2) continue;
-    var tekst = opoint_kj_sakTekst(bit.map(function (i) { return kandidater[i]; }));
-    var svar = tjeneste.spor(type, OPOINT_KJ_SAK_SYSTEM, tekst, OPOINT_KJ_SAK_MAX_TOKENS);
-    var g = svar.ok ? opoint_kj_tolkGrupper(svar.tekst, bit.length) : null;
-    if (svar.ok && !g) {
-      Logger.log('Saksgruppering, parsefeil (' + etikett + ' ' + ut.bolker + '): ' + String(svar.tekst).substring(0, 300));
-      svar = tjeneste.spor(type + '2', OPOINT_KJ_SAK_SYSTEM, tekst, OPOINT_KJ_SAK_MAX_TOKENS);
-      g = svar.ok ? opoint_kj_tolkGrupper(svar.tekst, bit.length) : null;
-      if (g) ut.reddet++;
+    var navn = etikett + ' ' + ut.bolker;
+    var r = kallEn(bit, type, navn);
+    if (!r.svar.ok) { ut.meld.push(navn + ': ' + r.svar.feil + ' – ikke slått sammen.'); ut.tapt++; continue; }
+    if (!r.g) {
+      // Tilbakefall: del bolken i to og grupper hver halvdel
+      var midt = Math.ceil(bit.length / 2), deler = [bit.slice(0, midt), bit.slice(midt)], okDeler = 0;
+      ut.delt++;
+      deler.forEach(function (del, di) {
+        if (del.length < 2) { okDeler++; return; }
+        var rd = kallEn(del, type + 'del' + (di + 1), navn + ' del ' + (di + 1));
+        if (rd.g) { okDeler++; rd.g.forEach(function (gr) { ut.grupper.push(gr.map(function (n) { return del[n - 1]; })); }); }
+      });
+      ut.meld.push(navn + ': kunne ikke tolke JSON – delt i to (' + okDeler + ' av 2 deler gruppert).');
+      if (okDeler < 2) ut.tapt++;
+      continue;
     }
-    if (!svar.ok) { ut.meld.push(etikett + ' ' + ut.bolker + ': ' + svar.feil + ' – ikke slått sammen.'); ut.tapt++; continue; }
-    if (!g) { ut.meld.push(etikett + ' ' + ut.bolker + ': kunne ikke tolke JSON (også etter nytt forsøk) – ikke slått sammen.'); ut.tapt++; continue; }
-    g.forEach(function (gr) { ut.grupper.push(gr.map(function (n) { return bit[n - 1]; })); });
+    r.g.forEach(function (gr) { ut.grupper.push(gr.map(function (n) { return bit[n - 1]; })); });
   }
   return ut;
 }
@@ -1133,7 +1249,7 @@ function opoint_kj_kiSystem() {
     'en konkurrent). Kommenter ALDRI at ingressen er avkuttet, kort, tynn eller mangler informasjon, og si aldri at ' +
     'saken er relevant.\n\n' + OPOINT_KJ_PRIORITET_REGLER + '\n\nSvar KUN med JSON, uten kodeblokk og uten annen tekst: ' +
     '{"relevant": true/false, "kategori": "...", "nevner_oss": true/false, "prioritet": "høy"/"middels"/"lav", ' +
-    '"irrelevant_grunn": "...", "notat": ""}';
+    '"irrelevant_grunn": "...", "notat": ""}. Bruk aldri doble anførselstegn (") inne i tekstverdiene – bruk «» i stedet.';
 }
 
 /** Ingress ordrett fra Opoint: bare trimmet og mellomrom slått sammen. "…" beholdes. */
@@ -1167,7 +1283,7 @@ function opoint_kj_kiBrukerTekst(k) {
 
 /** Tolker relevanssvaret. nevner_oss tas fra modellen (ingen kodebasert overstyring). null ved parsefeil. */
 function opoint_kj_tolkRelevans(tekst) {
-  var o = parseAiSvarJson(tekst);
+  var o = opoint_kj_parseJson(tekst);
   if (!o || typeof o.relevant !== 'boolean') return null;
   var pri = typeof o.prioritet === 'string' ? o.prioritet.trim().toLowerCase().replace('hoy', 'høy') : '';
   return { relevant: o.relevant, kategori: normaliserAiKategori(o.kategori), nevnerOss: o.nevner_oss === true,
@@ -1259,12 +1375,19 @@ function opoint_kj_vurderSaker(saker, oppsett, tjeneste, reserver) {
   var svar1 = tjeneste.sporMange(trengerKi.map(function (x) { return { type: 'rel', system: system, tekst: x.tekst, maxTokens: OPOINT_KJ_KI_MAX_TOKENS }; }), grense);
   var tolket = svar1.map(function (sv) { return sv.ok ? opoint_kj_tolkRelevans(sv.tekst) : null; });
   var igjen = [];
-  trengerKi.forEach(function (x, i) { if (svar1[i].ok && !tolket[i]) igjen.push(i); });
+  trengerKi.forEach(function (x, i) {
+    if (svar1[i].ok && !tolket[i]) { igjen.push(i); tjeneste.loggParseFeil('relevans/prioritet (' + x.sak.representant.domene + ')', svar1[i], 1); }
+  });
   if (igjen.length) {
-    var svar2 = tjeneste.sporMange(igjen.map(function (i) { return { type: 'rel2', system: system, tekst: trengerKi[i].tekst, maxTokens: OPOINT_KJ_KI_MAX_TOKENS }; }), grense);
+    // Nytt forsøk; ble svaret avkortet (stop_reason = max_tokens), dobles max_tokens
+    var svar2 = tjeneste.sporMange(igjen.map(function (i) {
+      return { type: 'rel2', system: system, tekst: trengerKi[i].tekst,
+        maxTokens: svar1[i].stopReason === 'max_tokens' ? OPOINT_KJ_KI_MAX_TOKENS * 2 : OPOINT_KJ_KI_MAX_TOKENS };
+    }), grense);
     igjen.forEach(function (i, j) {
       svar1[i] = svar2[j];
       tolket[i] = svar2[j].ok ? opoint_kj_tolkRelevans(svar2[j].tekst) : null;
+      if (svar2[j].ok && !tolket[i]) tjeneste.loggParseFeil('relevans/prioritet (' + trengerKi[i].sak.representant.domene + ')', svar2[j], 2);
       if (tolket[i]) { ki.reddet++; trengerKi[i].sak.kiResultat.reddet = true; }
     });
   }
@@ -1374,7 +1497,7 @@ function opoint_kj_byggRaderSaker(forb, saker, vindu, ki, d, ekstra) {
     'Også i dagens e-post', st.iDagensEpost, 'Norskspråklige treff', st.ingenNorske ? 'Ingen nye norskspråklige treff' : st.norske,
     'Modell-ID', ki.modell, 'Promptversjon', ki.promptversjon]);
   rader.push(['KI', ki.melding, 'Saksgruppering', ki.gruppering || '(ikke kjørt)', 'Sammendrag', e.sammendragMelding || '(ikke laget)',
-    'E-post', e.epostMelding || '(ikke sendt)', 'HTML i Drive', e.driveUrl || '', 'Ekskluderte domener',
+    'E-post', e.epostMelding || '(ikke sendt)', 'HTML i Drive', e.driveUrl || '', 'Parsefeil logget i «KI-feil»', e.kiFeil || 0, 'Ekskluderte domener',
     Object.keys(eksklDom).map(function (x) { return x + ' ×' + eksklDom[x]; }).join('; '),
     'Merknader', forb.oppsett.merknader.join(' | '), 'KI-feil', opointKort((ki.feil || []).join(' | '), 300)]);
   rader.push(['']);
@@ -1468,7 +1591,8 @@ var OPOINT_KJ_SAMMENDRAG_SYSTEM =
   ' ord til sammen, på flytende norsk. Hver setning bygger på nøyaktig én sak og oppgir nummeret til den. Bruk bare ' +
   'det som står i overskriften og ingressen: ingen tall, navn, steder eller årsaker som ikke står der, ingen vurderinger ' +
   'og ingen kommentarer om at teksten er kort eller avkuttet. Velg de viktigste sakene hvis det er flere enn ' +
-  OPOINT_KJ_SAMMENDRAG_MAKS_SETNINGER + '.\n\nSvar KUN med JSON, uten kodeblokk: {"setninger": [{"tekst": "...", "sak": 1}]}';
+  OPOINT_KJ_SAMMENDRAG_MAKS_SETNINGER + '.\n\nSvar KUN med JSON, uten kodeblokk: {"setninger": [{"tekst": "...", "sak": 1}]}. ' +
+  'Bruk aldri doble anførselstegn (") inne i tekstene – bruk «» i stedet.';
 
 /** Inndata: middels-saker (relevant = ja, prioritet middels). */
 function opoint_kj_sammendragInndata(saker) {
@@ -1483,7 +1607,7 @@ function opoint_kj_sammendragInndata(saker) {
 
 /** Tolker og strammer inn: maks 5 setninger, maks 120 ord, gyldig saksnummer. null ved parsefeil. */
 function opoint_kj_tolkSammendrag(tekst, inndata) {
-  var o = parseAiSvarJson(tekst);
+  var o = opoint_kj_parseJson(tekst);
   if (!o || !Array.isArray(o.setninger)) return null;
   var ut = [], ord = 0;
   for (var i = 0; i < o.setninger.length && ut.length < OPOINT_KJ_SAMMENDRAG_MAKS_SETNINGER; i++) {
@@ -1508,12 +1632,14 @@ function opoint_kj_lagSammendrag(saker, tjeneste) {
   var sv = tjeneste.sporMange([{ type: 'samm', system: OPOINT_KJ_SAMMENDRAG_SYSTEM, tekst: tekst, maxTokens: OPOINT_KJ_SAMMENDRAG_MAX_TOKENS }])[0];
   var t = sv.ok ? opoint_kj_tolkSammendrag(sv.tekst, inndata) : null;
   if (sv.ok && !t) {
+    tjeneste.loggParseFeil('sammendrag', sv, 1);
     sv = tjeneste.sporMange([{ type: 'samm2', system: OPOINT_KJ_SAMMENDRAG_SYSTEM, tekst: tekst, maxTokens: OPOINT_KJ_SAMMENDRAG_MAX_TOKENS }])[0];
     t = sv.ok ? opoint_kj_tolkSammendrag(sv.tekst, inndata) : null;
+    if (sv.ok && !t) tjeneste.loggParseFeil('sammendrag', sv, 2);
     if (t) ut.reddet = 1;
   }
   if (!sv.ok) { ut.melding = 'Sammendrag ikke laget: ' + sv.feil; return ut; }
-  if (!t || !t.length) { ut.melding = 'Sammendrag ikke laget: kunne ikke tolke KI-svaret (også etter nytt forsøk).'; return ut; }
+  if (!t || !t.length) { ut.melding = 'Sammendrag ikke laget: kunne ikke tolke KI-svaret (også etter nytt forsøk) – e-posten sendes uten «Ellers i bransjen».'; return ut; }
   ut.setninger = t;
   ut.melding = t.length + ' setninger fra ' + inndata.length + ' middels-saker' + (ut.reddet ? ' (reddet ved nytt forsøk)' : '') + '.';
   return ut;
@@ -2967,6 +3093,7 @@ function opoint_kj_testSaker(start, slutt, kontroller, fane, vinduId, vis) {
     var grupper = opoint_kj_grupperSaker(forb.kandidater, tjeneste);
     var saker = opoint_kj_lagSaker(forb.kandidater, grupper);
     rader = opoint_kj_byggRaderTestSaker(forb, saker, grupper, tjeneste, kontroller, vindu, d, vinduId, vis || []);
+    try { opoint_kj_skrivKiFeil(ss, tjeneste); } catch (e) { Logger.log('KI-feil-fanen: ' + e.message); }
   } catch (e) {
     rader = [['FEIL', opointMaskerNokkel(String(e && e.message ? e.message : e), apiKey)]];
   }
