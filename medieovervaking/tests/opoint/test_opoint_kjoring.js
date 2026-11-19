@@ -24,7 +24,7 @@ assert.strictEqual((kode.match(/api\.anthropic\.com/g) || []).length, 1); // bar
 assert.ok(!/getSheetByName\((?:FANE_|'Sendte|'Artikkellogg|'Referansesett|'Kjøretidslogg|'Mottakere)/.test(kode));
 // Ingen skriving til beskyttede faner: skrivFane kalles kun med egne fanekonstanter
 (kode.match(/opoint_t3_skrivFane\(ss, ([A-Z0-9_]+)/g) || []).forEach(m =>
-  assert.ok(/OPOINT_(DIAG_FANE|DIAG_FANE_DEKNING|KJOR_FANE|KJOR_FANE_SPORRINGER|KJ_TEST1_FANE|KJ_UKE_FANE|KJ_TEST2_FANE|KJ_TESTD_FANE|KJ_T2B_FANE|KJ_T2C_FANE|KJ_T2DE_FANE|KJOR_FANE_ALLE|KJ_SCAN_FANE)$/.test(m.split(', ')[1]), m));
+  assert.ok(/OPOINT_(DIAG_FANE|DIAG_FANE_DEKNING|KJOR_FANE|KJOR_FANE_SPORRINGER|KJ_TEST1_FANE|KJ_UKE_FANE|KJ_TEST2_FANE|KJ_TESTD_FANE|KJ_T2B_FANE|KJ_T2C_FANE|KJ_T2DE_FANE|KJOR_FANE_ALLE|KJ_SCAN_FANE|KJ_T420_FANE)$/.test(m.split(', ')[1]), m));
 assert.strictEqual(f.OPOINT_KJOR_SEND_EPOST, undefined); // e-post er fjernet helt
 
 // --- Body ---
@@ -587,3 +587,97 @@ console.log('Rettelse a–c + steg 3–5-tester OK');
 // Intern hjelpefunksjon kjørt alene gir forståelig feil
 assert.throws(() => f.opoint_kj_kjorScandasia(undefined, { oldest: 1, newest: 2 }), /intern hjelpefunksjon/);
 console.log('Vakt mot direkte kjøring OK');
+
+// ===================== 420-test, tverrbolk-runde, nytt forsøk =====================
+(function () {
+  const props = { ANTHROPIC_API_KEY: 'sk-HEMMELIG', AI_MODEL: 'claude-haiku-5-5' };
+  const lagTj = (svarFn, maks) => {
+    const kall = [];
+    const t = f.opoint_kj_lagKiTjeneste(maks || 80, Date.now(), { props: { getProperty: n => props[n] }, cache: null, hash: x => x,
+      fetch: body => { kall.push(body); return { status: 200, tekst: JSON.stringify({ content: [{ type: 'text', text: svarFn(body, kall.length) }], usage: { input_tokens: 10, output_tokens: 1 } }) }; } });
+    t.kallListe = kall; return t;
+  };
+  // 320 artikler → 3 bolker; sak X ligger i bolk 1 (indeks 0) og bolk 3 (indeks 310)
+  const mange = Array.from({ length: 320 }, (_, i) => ({ doc: doc({ id_article: i, header: { text: (i === 0 || i === 310) ? 'Sak X kunngjort' : 'Tittel ' + i } }),
+    ekskludert: false, niva: 3, apen: 'ukjent', domene: 'd' + i + '.no', strommer: ['B'] }));
+  const tj = lagTj(body => {
+    const u = body.messages[0].content;
+    const linjer = u.split('\n');
+    const x = linjer.map((l, i) => l.includes('Sak X') ? i + 1 : 0).filter(n => n);
+    return JSON.stringify({ grupper: x.length >= 2 ? [x] : [] });
+  });
+  const g = f.opoint_kj_grupperSaker(mange, tj);
+  assert.deepStrictEqual(J(g.grupper.map(gr => gr.slice().sort((a, b) => a - b))), [[0, 310]]);
+  assert.strictEqual(tj.kallListe.length, 3 + 1); // 3 bolker + ett tverrbolk-kall (320 representanter ≤ 400)
+  assert.ok(g.melding.includes('slo sammen 1 saker'), g.melding);
+  const saker = f.opoint_kj_lagSaker(mange, g);
+  assert.strictEqual(saker.length, 319); assert.strictEqual(mange[0].sak, mange[310].sak);
+  // Under 150 artikler: ingen tverrbolk-runde
+  const tj2 = lagTj(() => '{"grupper": []}');
+  f.opoint_kj_grupperSaker(mange.slice(0, 50), tj2);
+  assert.strictEqual(tj2.kallListe.length, 1);
+
+  // Nytt forsøk ved parsefeil i gruppering: andre svar er gyldig → reddet
+  const tj3 = lagTj((b, n) => n === 1 ? 'beklager' : '{"grupper": [[1, 2]]}');
+  const g3 = f.opoint_kj_grupperSaker(mange.slice(0, 5), tj3);
+  assert.strictEqual(g3.reddet, 1); assert.deepStrictEqual(J(g3.grupper), [[0, 1]]); assert.ok(g3.melding.includes('reddet'));
+  const tj4 = lagTj(() => 'beklager');
+  const g4 = f.opoint_kj_grupperSaker(mange.slice(0, 5), tj4);
+  assert.strictEqual(tj4.kallListe.length, 2); assert.strictEqual(g4.grupper.length, 0);
+
+  // Nytt forsøk ved parsefeil i relevans: reddet og tvil telles
+  const kand = [0, 1].map(i => ({ doc: doc({ id_article: i, header: { text: 'Sak ' + i }, summary: { text: 'Ingress ' + i } }),
+    ekskludert: false, niva: 3, apen: 'ukjent', domene: 'x' + i + '.no', strommer: ['B'], sporringer: [], soketerm: [], fastNavn: [] }));
+  let n0 = 0;
+  const tj5 = lagTj(body => {
+    const u = body.messages[0].content;
+    if (u.includes('Sak 0')) { n0++; return n0 === 1 ? 'tull' : '{"relevant": true, "kategori": "Annet", "nevner_oss": false, "irrelevant_grunn": "", "notat": ""}'; }
+    return 'tull';
+  });
+  const sk = f.opoint_kj_lagSaker(kand, null);
+  const ki = f.opoint_kj_vurderSaker(sk, { sokeord: [] }, tj5);
+  assert.strictEqual(ki.reddet, 1); assert.strictEqual(ki.tvil, 1);
+  assert.strictEqual(sk[0].kiResultat.relevant, true); assert.strictEqual(sk[0].kiResultat.reddet, true);
+  assert.strictEqual(f.opoint_kj_kiTekst(sk[1].kiResultat), 'tvil');
+  assert.strictEqual(tj5.kallListe.length, 4);
+  assert.ok(ki.melding.includes('reddet ved nytt forsøk 1') && ki.melding.includes('tvil 1'));
+
+  // 420-test: D1 treffer i batch 5 og full henting stoppet på kalltaket før D
+  const art = f.OPOINT_KJ_T420_ART;
+  const a420 = doc({ id_article: 420, id_site: 64, url_common: 'skipsrevyen.no', orig_url: 'https://www.skipsrevyen.no/a', header: { text: art.tittel }, unix_timestamp: 1762345380 });
+  const fyll = Array.from({ length: 110 }, (_, i) => doc({ id_article: 1000 + i, id_site: 64, header: { text: 'Annen sak ' + i } }));
+  const m = klient(b => {
+    const st = b.searchterm;
+    if (st.startsWith('header:')) return ok(st.includes('site:64') && st.includes('del 2') ? [] : [a420]);
+    const alle = fyll.slice(0, 104).concat([a420]);
+    const i0 = b.params.context ? Number(b.params.context) : 0;
+    return ok(alle.slice(i0, i0 + 25), i0 + 25 < alle.length ? String(i0 + 25) : '');
+  }, 30);
+  const u = f.opoint_kj_kjor420Direkte(m.kl, { oldest: 1, newest: 2 }, () => false, { kart: {}, kilder: {} });
+  assert.ok(u.id.funnet); assert.ok(u.d1Id.some(x => x.treff));
+  assert.strictEqual(u.d1Full[0].posisjon, 105); assert.strictEqual(u.d1Full[0].batch, 5);
+  assert.strictEqual(u.sjekk.register, ''); assert.strictEqual(u.sjekk.domene, 'skipsrevyen.no');
+  const forb = { klient: { antall: () => 80, maksKall: 80, takNadd: () => true }, kandidater: [],
+    resultater: [{ navn: 'D1 del 1/2', strom: 'D', statuser: [], dokumenter: [], contextTom: '', feil: 'Ikke kjørt: kalltaket (80) nådd.', merknad: '' }] };
+  const r = f.opoint_kj_byggRader420(u, forb, { oldest: 1, newest: 2 }, m.kl, d);
+  assert.ok(r[1][1].includes('batch 5'), r[1][1]);
+  assert.ok(r[1][1].includes('ikke kjørt eller avbrutt'), r[1][1]);
+  assert.ok(r[1][1].includes('IKKE med i full henting'));
+  assert.ok(r.some(x => x[0] === 'Spørringer (status)') === false); // statusdelen heter "5) Full henting" her
+})();
+console.log('420-test, tverrbolk og nytt forsøk OK');
+// Over 400 representanter: bolkene sammenlignes parvis
+(function () {
+  const props = { ANTHROPIC_API_KEY: 'k', AI_MODEL: 'claude-haiku-5-5' };
+  const kall = [];
+  const tj = f.opoint_kj_lagKiTjeneste(80, Date.now(), { props: { getProperty: n => props[n] }, cache: null, hash: x => x,
+    fetch: body => { kall.push(body); const l = body.messages[0].content.split('\n'); const x = l.map((t, i) => t.includes('Sak Y') ? i + 1 : 0).filter(n => n);
+      return { status: 200, tekst: JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({ grupper: x.length >= 2 ? [x] : [] }) }] }) }; } });
+  const mange = Array.from({ length: 450 }, (_, i) => ({ doc: doc({ id_article: i, header: { text: (i === 5 || i === 440) ? 'Sak Y' : 'T ' + i } }),
+    ekskludert: false, niva: 3, apen: 'ukjent', domene: 'd' + i + '.no', strommer: ['B'] }));
+  const g = f.opoint_kj_grupperSaker(mange, tj);
+  assert.deepStrictEqual(J(g.grupper.map(x => x.slice().sort((a, b) => a - b))), [[5, 440]]);
+  assert.strictEqual(kall.length, 3 + 3); // 3 bolker + 3 bolkpar
+  assert.ok(kall.slice(3).every(b => b.messages[0].content.split('\n').length <= 400));
+})();
+console.log('Parvis tverrbolk OK');
