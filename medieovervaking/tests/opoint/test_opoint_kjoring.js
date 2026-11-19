@@ -22,8 +22,8 @@ const kode = fs.readFileSync(__dirname + '/../../OpointKjoring.gs', 'utf8');
 assert.ok(!/newTrigger\(|MailApp\.|textrazor|readership|text:\s*1|api\.anthropic\.com/.test(kode));
 assert.ok(!/getSheetByName\((?:FANE_|'Sendte|'Artikkellogg|'Referansesett|'Kjøretidslogg|'Mottakere)/.test(kode));
 // Ingen skriving til beskyttede faner: skrivFane kalles kun med egne fanekonstanter
-(kode.match(/opoint_t3_skrivFane\(ss, ([A-Z_]+)/g) || []).forEach(m =>
-  assert.ok(/OPOINT_(DIAG_FANE|DIAG_FANE_DEKNING|KJOR_FANE|KJOR_FANE_SPORRINGER)$/.test(m.split(', ')[1]), m));
+(kode.match(/opoint_t3_skrivFane\(ss, ([A-Z0-9_]+)/g) || []).forEach(m =>
+  assert.ok(/OPOINT_(DIAG_FANE|DIAG_FANE_DEKNING|KJOR_FANE|KJOR_FANE_SPORRINGER|KJ_TEST1_FANE)$/.test(m.split(', ')[1]), m));
 assert.strictEqual((kode.match(/GmailApp\.sendEmail/g) || []).length, 1);
 assert.ok(/Session\.getEffectiveUser\(\)\.getEmail\(\)/.test(kode));
 assert.strictEqual(f.OPOINT_KJOR_SEND_EPOST, false);
@@ -57,12 +57,14 @@ const lown = A.find(x => x.navn === 'A LOWNOISER');
 assert.strictEqual(lown.searchterm, '(LOWNOISER OR lownoiser)');
 assert.strictEqual(A.find(x => x.navn === 'A HyShip').searchterm, '(HyShip OR hyship OR HYSHIP)');
 assert.strictEqual(A.find(x => x.navn === 'A Ocean Charger').searchterm, '("Ocean Charger" OR "ocean charger" OR "OCEAN CHARGER")');
-assert.strictEqual(A.find(x => x.navn === 'A GASS').searchterm, 'GASS');
-assert.strictEqual(A.length, 1 + 12 + 1);
+// Steg 1: GASS søkes ikke lenger alene i strøm A (bare som Tier 2 med kontekst)
+assert.strictEqual(A.find(x => x.navn === 'A GASS'), undefined);
+assert.strictEqual(A.length, 1 + 12);
 assert.ok(A.every(x => !x.searchterm.includes('header:')));
 const alle = f.opoint_kj_byggAlleSporringer(f.OPOINT_T2_SPORRINGER);
-assert.strictEqual(alle.length, 14 + 10 + 1 + 1);
-assert.strictEqual(alle[alle.length - 1].searchterm, 'site:288,19526,18139,338722,141703');
+const antD = f.opoint_kj_byggStromD().length;
+assert.strictEqual(alle.length, 13 + 10 + 1 + antD);
+assert.ok(alle[alle.length - 1].searchterm.endsWith('AND site:288,19526,18139,338722,141703')); // alle ukjente → D2
 
 // --- Mock-klient ---
 function klient(svarFn, maks) {
@@ -79,7 +81,7 @@ f.opoint_kj_verifiserSites(res); assert.ok(res.merknad.includes('bekreftet'));
 res = { dokumenter: [doc({ id_site: 288 }), doc({ id_site: 5 })], feil: '', merknad: '' };
 f.opoint_kj_verifiserSites(res); assert.ok(res.feil.includes('ikke bekreftet')); assert.strictEqual(res.dokumenter.length, 0);
 res = { dokumenter: [], feil: '', merknad: '' };
-f.opoint_kj_verifiserSites(res); assert.ok(res.feil.includes('Ikke verifiserbart'));
+f.opoint_kj_verifiserSites(res); assert.strictEqual(res.feil, ''); assert.ok(res.merknad.includes('0 dokumenter')); // steg 1: ikke feil
 
 // --- Henting: feil fortsetter, paging, kalltak ---
 let m = klient((b, n) => b.searchterm === 'bad' ? { status: 400, tekst: '{"detail":"x"}' } :
@@ -190,3 +192,92 @@ assert.strictEqual(radD[5][8], 'http://www.ex.com/a/');
 
 assert.ok(!logg.join('\n').includes('HEMMELIG'));
 console.log('Alle OpointKjoring-tester OK');
+
+// ===================== Steg 1 =====================
+(function () {
+  // Søkeord slik hentSokeord() returnerer dem (kontekstord splittet på komma)
+  const sokeord = [
+    { sokeord: 'Maritime CleanTech', tier: 1, kontekstord: [], kategori: 'X' },
+    { sokeord: 'FLAGSHIPS', tier: 2, kontekstord: ['hydrogen'] },
+    { sokeord: 'TrAM', tier: 2, kontekstord: ['elektrisk ferge', 'hurtigferge', 'fast ferry', 'Maritime CleanTech', 'Medstraum'] },
+    { sokeord: 'Apollo', tier: 2, kontekstord: ['ammoniakk', 'ammonia', 'viking energy', 'Eidesvik', 'Maritime CleanTech'] },
+    { sokeord: 'GASS', tier: 2, kontekstord: ['artificial', 'kunstig', 'skip*', 'vessel*', 'Maritime CleanTech'] },
+    { sokeord: 'AWESOME', tier: 2, kontekstord: ['Kongsberg maritime', 'Odfjell', 'wind assisted', 'vind-assistert', 'vind-drevet', 'shipping', 'propulsion', 'Maritime CleanTech'] },
+    { sokeord: 'zero-emission zone', tier: 2, kontekstord: ['shipping', 'vessel*', 'maritime'] },
+    { sokeord: 'Tom', tier: 2, kontekstord: [] },
+    { sokeord: 'Feil', tier: 2, kontekstord: ['Eidesvik Maritime CleanTech'] }
+  ];
+  const t2 = f.opoint_kj_byggTier2(sokeord);
+  const q = J(t2.sporringer.map(x => x.searchterm));
+  assert.deepStrictEqual(q.slice(0, 6), [
+    'FLAGSHIPS AND (hydrogen)',
+    'TrAM AND ("elektrisk ferge" OR hurtigferge OR "fast ferry" OR "Maritime CleanTech" OR Medstraum)',
+    'Apollo AND (ammoniakk OR ammonia OR "viking energy" OR Eidesvik OR "Maritime CleanTech")',
+    'GASS AND (artificial OR kunstig OR skip* OR vessel* OR "Maritime CleanTech")',
+    'AWESOME AND ("Kongsberg maritime" OR Odfjell OR "wind assisted" OR "vind-assistert" OR "vind-drevet" OR shipping OR propulsion OR "Maritime CleanTech")',
+    '"zero-emission zone" AND (shipping OR vessel* OR maritime)'
+  ]);
+  assert.ok(t2.merknader.some(m => m.includes('"Tom" har ingen kontekstord')));
+  assert.ok(t2.merknader.some(m => m.includes('Mulig manglende komma') && m.includes('Eidesvik Maritime CleanTech')));
+  assert.ok(t2.merknader.some(m => m.includes('"skip*"')));
+  assert.ok(!q.some(s => /\bgass\b/.test(s)), 'ingen små-bokstav-varianter');
+  assert.strictEqual(f.opoint_kj_formaterLedd('ab*'), '"ab*"'); // < 3 tegn før * → frase
+  assert.strictEqual(f.opoint_kj_formaterLedd('Ship"aH2oy'), 'ShipaH2oy');
+
+  // Strøm A: GASS bare som Tier 2, ikke som eget navn
+  const A = f.opoint_kj_byggStromA(f.OPOINT_T2_SPORRINGER, t2);
+  assert.ok(!A.some(x => x.searchterm === 'GASS'));
+  assert.strictEqual(A.filter(x => x.tier2).length, 7);
+  assert.strictEqual(A.length, 1 + 12 + 7);
+
+  // D-tilordning fra forrige kjøring
+  const data = [['Vindu', 'x'], ['KI'], [''], ['Strøm(mer)', 'Dato', 'id_site', 'Domene'],
+    ['D', '', 288, 'skipsrevyen.no'], ['D', '', 288, 'skipsrevyen.no'], ['D', '', 19526, 'www.maritimt.com'],
+    ['D', '', 338722, 'logistikkinside.no'], ['D', '', 141703, 'energiogklima.no']];
+  const sd = f.opoint_kj_siteDomenerFraRader(data);
+  assert.deepStrictEqual(J(sd), { '288': 'skipsrevyen.no', '19526': 'maritimt.com', '338722': 'logistikkinside.no', '141703': 'energiogklima.no' });
+  const tl = f.opoint_kj_tilordneD(sd);
+  assert.deepStrictEqual(J(tl.map(t => t.id + t.gruppe)), ['288D1', '19526D1', '18139D2', '338722D2', '141703D2']);
+  assert.ok(tl[2].domene.includes('ukjent'));
+
+  // D-spørringer: maks 15 ord, riktig site-liste
+  const D = f.opoint_kj_byggStromD(tl);
+  const ord = s => s.replace(/site:\S+/, '').replace(/\b(AND|OR)\b|[()"]/g, ' ').trim().split(/\s+/).length;
+  D.forEach(x => assert.ok(ord(x.searchterm) <= 15, x.searchterm));
+  assert.ok(D.filter(x => x.navn.startsWith('D1')).every(x => x.searchterm.endsWith('AND site:288,19526')));
+  assert.ok(D.filter(x => x.navn.startsWith('D2')).every(x => x.searchterm.endsWith('AND site:18139,338722,141703') &&
+    x.searchterm.includes('AND (skip* OR fartøy* OR ferge* OR ferje* OR rederi* OR havn* OR maritim*)')));
+  const alleTema = D.filter(x => x.navn.startsWith('D1')).map(x => x.searchterm).join(' ');
+  f.OPOINT_KJOR_D_TEMAORD.forEach(t => assert.ok(alleTema.includes(t), t));
+  assert.ok(alleTema.includes('"EU ETS"') && alleTema.includes('"Maritime CleanTech"'));
+  // Ukjent domene → D2
+  assert.ok(f.opoint_kj_tilordneD({}).every(t => t.gruppe === 'D2'));
+
+  // Verifisering per gruppe, 0 dokumenter er ikke feil
+  let rv = { dokumenter: [doc({ id_site: 288 })], feil: '', merknad: '' };
+  f.opoint_kj_verifiserSites(rv, [288, 19526]); assert.ok(rv.merknad.includes('bekreftet'));
+  rv = { dokumenter: [doc({ id_site: 18139 })], feil: '', merknad: '' };
+  f.opoint_kj_verifiserSites(rv, [288, 19526]); assert.ok(rv.feil.includes('ikke bekreftet'));
+  rv = { dokumenter: [], feil: '', merknad: '' };
+  f.opoint_kj_verifiserSites(rv, [288]); assert.strictEqual(rv.feil, '');
+
+  // Testfunksjonens logikk med simulerte svar
+  const vindu = { oldest: 1, newest: 2 }, vinduH = { oldest: 3, newest: 4 };
+  const m = klient(b => {
+    if (b.searchterm === 'GASS') return ok([doc({ header: { text: 'MODENA komfyr på gass' } }), doc({ id_article: 2, header: { text: 'Sykkelritt' } })]);
+    if (b.searchterm.startsWith('GASS AND') && b.params.oldest === 3) return ok([doc({ header: { text: 'GASS completes final Business Plan ahead of project conclusion' } })]);
+    if (b.searchterm.startsWith('GASS AND')) return ok([]);
+    if (b.searchterm.startsWith('site:')) return ok([doc({ id_site: 288 }), doc({ id_site: 288, id_article: 2 })]);
+    if (b.searchterm.includes('site:288')) return ok([doc({ id_site: 288 })]);
+    return ok([]);
+  }, 60);
+  const oppsett = { tier2: t2, tilordningD: tl, merknader: [] };
+  const res = f.opoint_kj_kjorTestSteg1(m.kl, oppsett, vindu, vinduH, () => false);
+  const rader = f.opoint_kj_byggRaderTestSteg1(res, oppsett, vindu, vinduH, m.kl, d);
+  assert.strictEqual(rader[3][1], 'OK'); assert.ok(rader[3][2].includes('Før: 2'));
+  assert.strictEqual(rader[4][1], 'OK');
+  assert.ok(rader[5][1].startsWith('Før: 2') && rader[5][2].startsWith('Etter (D1+D2): 2'));
+  assert.ok(m.kall.every(c => !('text' in c.params.main)));
+  assert.ok(m.kall.length <= 60);
+})();
+console.log('Steg 1-tester OK');
