@@ -19,12 +19,16 @@ fs.readdirSync(__dirname + '/../..').filter(x => x.endsWith('.gs') && x !== 'Opo
   assert.deepStrictEqual(ny.filter(x => andre.includes(x)), [], 'kollisjon med ' + fil);
 });
 const kode = fs.readFileSync(__dirname + '/../../OpointKjoring.gs', 'utf8');
-assert.ok(!/newTrigger\(|MailApp\.|GmailApp\.|textrazor|readership|text:\s*1|getEffectiveUser|vurderTreffMedAI\(/.test(kode));
-assert.strictEqual((kode.match(/api\.anthropic\.com/g) || []).length, 1); // bare i opoint_kj_lagKiTjeneste
+assert.ok(!/newTrigger\(|MailApp\.|textrazor|readership|text:\s*1|getEffectiveUser|vurderTreffMedAI\(/.test(kode));
+// Del 4: én utsending, og bare til Script Property TEST_EPOST
+assert.strictEqual((kode.match(/GmailApp\.sendEmail/g) || []).length, 1);
+assert.ok(/getProperty\('TEST_EPOST'\)/.test(kode) && /GmailApp\.sendEmail\(String\(til\)\.trim\(\)/.test(kode));
+assert.ok(!/hentMottakere|FANE_MOTTAKERE/.test(kode));
+assert.strictEqual((kode.match(/api\.anthropic\.com/g) || []).length, 2); // enkeltkall og fetchAll i opoint_kj_lagKiTjeneste
 assert.ok(!/getSheetByName\((?:FANE_|'Sendte|'Artikkellogg|'Referansesett|'Kjøretidslogg|'Mottakere)/.test(kode));
 // Ingen skriving til beskyttede faner: skrivFane kalles kun med egne fanekonstanter
 (kode.match(/opoint_t3_skrivFane\(ss, ([A-Z0-9_]+)/g) || []).forEach(m =>
-  assert.ok(/OPOINT_(DIAG_FANE|DIAG_FANE_DEKNING|KJOR_FANE|KJOR_FANE_SPORRINGER|KJ_TEST1_FANE|KJ_UKE_FANE|KJ_TEST2_FANE|KJ_TESTD_FANE|KJ_T2B_FANE|KJ_T2C_FANE|KJ_T2DE_FANE|KJOR_FANE_ALLE|KJ_SCAN_FANE|KJ_T420_FANE|KJ_TDEDUP_FANE|KJ_TRC_FANE)$/.test(m.split(', ')[1]), m));
+  assert.ok(/OPOINT_(DIAG_FANE|DIAG_FANE_DEKNING|KJOR_FANE|KJOR_FANE_SPORRINGER|KJ_TEST1_FANE|KJ_UKE_FANE|KJ_TEST2_FANE|KJ_TESTD_FANE|KJ_T2B_FANE|KJ_T2C_FANE|KJ_T2DE_FANE|KJOR_FANE_ALLE|KJ_SCAN_FANE|KJ_T420_FANE|KJ_TDEDUP_FANE|KJ_TRC_FANE|KJOR_FANE_SAMMENDRAG)$/.test(m.split(', ')[1]), m));
 assert.strictEqual(f.OPOINT_KJOR_SEND_EPOST, undefined); // e-post er fjernet helt
 
 // --- Body ---
@@ -72,7 +76,7 @@ function klient(svarFn, maks) {
   return { kl, kall };
 }
 const ok = (docs, c) => ({ status: 200, tekst: JSON.stringify({ searchresult: { documents: docs.length, range_count: 9, context: c || '', document: docs } }) });
-const doc = o => Object.assign({ id_site: 1, id_article: 1, unix_timestamp: 1763450000, header: { text: 'x' }, summary: { text: 's' } }, o);
+const doc = o => Object.assign({ id_site: 1, id_article: 1, unix_timestamp: 1763450000, header: { text: 'x' }, summary: { text: 's' }, language: { text: 'en' } }, o);
 
 // --- Strøm D-verifisering ---
 let res = { dokumenter: [doc({ id_site: 64 }), doc({ id_site: 19526 })], feil: '', merknad: '' };
@@ -478,8 +482,8 @@ console.log('Steg 2 (rettet)-tester OK');
   const tekst = f.opoint_kj_sakTekst([{ doc: doc({ header: { text: lang }, language: { text: 'en' } }) }]);
   assert.strictEqual(tekst, '1 [en] ' + 'x'.repeat(120) + ' || s'); // 1c: ingress med
   const tLang = f.opoint_kj_sakTekst([{ doc: doc({ header: { text: 'T' }, summary: { text: 'y'.repeat(300) } }) }]);
-  assert.strictEqual(tLang, '1 [?] T || ' + 'y'.repeat(200));
-  assert.strictEqual(f.opoint_kj_sakTekst([{ doc: doc({ header: { text: 'T' }, summary: { text: '' } }) }]), '1 [?] T');
+  assert.strictEqual(tLang, '1 [en] T || ' + 'y'.repeat(200));
+  assert.strictEqual(f.opoint_kj_sakTekst([{ doc: doc({ header: { text: 'T' }, summary: { text: '' }, language: undefined }) }]), '1 [?] T');
 
   // KI-tjeneste med mock: kalltak, buffer, kostnad, nøkkel aldri ut
   let anth = [];
@@ -506,7 +510,7 @@ console.log('Steg 2 (rettet)-tester OK');
   assert.deepStrictEqual(J(g.grupper), [[0, 1]]);
   const saker = f.opoint_kj_lagSaker(kand, g);
   assert.strictEqual(saker.length, 3); assert.strictEqual(saker[0].representant, kand[1]); assert.strictEqual(saker[0].fastRelevant, true);
-  assert.strictEqual(saker[0].andreKilder, 'a.no');
+  assert.strictEqual(saker[0].andreKilder, 'a.no (3)');
   const oppsett = { sokeord: [{ sokeord: 'HyShip', kategori: 'Prosjekter' }] };
   const ki = f.opoint_kj_vurderSaker(saker, oppsett, t1);
   assert.strictEqual(saker[0].kiResultat.relevant, true); assert.strictEqual(saker[0].kiResultat.nevnerOss, true);
@@ -554,9 +558,9 @@ console.log('Steg 2 (rettet)-tester OK');
   const forb = { kandidater: kand, klient: klient(() => ok([]), 5).kl, oppsett: { merknader: [] }, resultater: [] };
   const rs1 = f.opoint_kj_byggRaderSaker(forb, saker, { oldest: 1, newest: 2 }, ki, d);
   assert.strictEqual(rs1[3][21], 'Min vurdering'); assert.strictEqual(rs1[3][10], 'Antall tilsvarende saker');
-  assert.strictEqual(rs1.length, 4 + 3); assert.strictEqual(rs1[4][10], 1); assert.strictEqual(rs1[4][11], 'a.no');
+  assert.strictEqual(rs1.length, 4 + 3); assert.strictEqual(rs1[4][10], 1); assert.strictEqual(rs1[4][11], 'a.no (3)');
   assert.strictEqual(rs1[4][5], 'Ammonia ship…'); assert.strictEqual(rs1[4][18], ''); // visning: … lagt til
-  const iEp = rs1[0].indexOf('E-post A'); assert.strictEqual(rs1[0][iEp + 1], 2); // HyShip-saken (A+B) og GASS-saken (A)
+  const iEp = rs1[0].indexOf('I e-posten (høy+middels) per strøm'); assert.strictEqual(rs1[0][iEp + 1], 'A 2, B 1, C 0, D 0'); // HyShip (A+B, høy) og GASS (A, middels)
   const ra = f.opoint_kj_byggRaderAlle(forb, saker, { oldest: 1, newest: 2 }, d);
   assert.strictEqual(ra.length, 3 + 4); assert.strictEqual(ra.filter(r => r[1] === 'JA').length, 3);
   // Punkt 3: ekskluderte vises nederst med Ekskludert? = ja og grunn
@@ -580,11 +584,11 @@ console.log('Steg 2 (rettet)-tester OK');
   assert.ok(f.opoint_kj_kiBrukerTekst(med).includes('Ingress: Avkuttet midt i\n')); // KI får ordrett, uten tillagt …
 
   // Verifiseringskontroller
-  const kt = f.opoint_kj_kontrollerSak({ type: 'samme', re: [/hyship/i] }, kand);
+  const kt = f.opoint_kj_kontrollerSak({ type: 'samme', monstre: [{ ord: ['hyship'] }] }, kand);
   assert.strictEqual(kt.status, 'OK');
-  const kt2 = f.opoint_kj_kontrollerSak({ type: 'adskilt', re: [/kaffe/i], mot: [/hyship/i] }, kand);
+  const kt2 = f.opoint_kj_kontrollerSak({ type: 'adskilt', monstre: [{ ord: ['kaffe'] }], mot: [{ ord: ['hyship'] }] }, kand);
   assert.strictEqual(kt2.status, 'OK');
-  assert.strictEqual(f.opoint_kj_kontrollerSak({ type: 'samme', re: [/finnes ikke/] }, kand).status, 'IKKE BEVIST');
+  assert.strictEqual(f.opoint_kj_kontrollerSak({ type: 'samme', monstre: [{ ord: ['finnes ikke'] }] }, kand).status, 'IKKE BEVIST');
 })();
 console.log('Rettelse a–c + steg 3–5-tester OK');
 // Intern hjelpefunksjon kjørt alene gir forståelig feil
@@ -784,11 +788,142 @@ console.log('Dedup etter Kildeprioritet OK');
     { doc: doc({ header: { text: 'EU ETS and LNG – SEA-LNG view' } }), domene: 'www.cleanshippinginternational.com'.replace('www.', ''), sak: 'S1', ekskludert: false },
     { doc: doc({ header: { text: 'EU ETS update' } }), domene: 'annen.no', sak: 'S9', ekskludert: false }
   ];
-  const kSea = f.OPOINT_KJ_SAKER_FELLES_KONTROLLER.find(k => k.navn.startsWith('SEA-LNG'));
-  assert.strictEqual(f.opoint_kj_kontrollerSak(kSea, kand).status, 'OK'); // annen.no telles ikke
-  assert.ok(f.OPOINT_KJ_SAKER1_KONTROLLER.length === 5 + f.OPOINT_KJ_SAKER_FELLES_KONTROLLER.length);
-  assert.ok(f.OPOINT_KJ_SAKER1_KONTROLLER.every(k => k && k.navn));
-  const k420 = f.OPOINT_KJ_SAKER_FELLES_KONTROLLER[0];
-  assert.ok(k420.re[0].test('Hagland Shipping får 236 millioner til batteridrevne skip') && k420.re[0].test('420 millioner kroner til batteribytte'));
+  const kSea = f.OPOINT_KJ_SAKER_KONTROLLER.find(k => k.navn.startsWith('SEA-LNG'));
+  assert.strictEqual(f.opoint_kj_kontrollerSak(kSea, kand, '17-18').status, 'OK'); // annen.no telles ikke
+  assert.strictEqual(f.opoint_kj_kontrollerSak(kSea, kand, '3-10').status, 'utenfor vindu');
+  assert.ok(f.OPOINT_KJ_SAKER1_KONTROLLER.every(k => k && k.navn && k.vindu && k.monstre.length));
 })();
 console.log('Del 1-tester OK');
+
+// ===================== Tillegg 2–4 og del 2–4 =====================
+(function () {
+  const dd = Object.assign({}, d, { dagTekst: x => x.toISOString().slice(0, 10) });
+  const props = { ANTHROPIC_API_KEY: 'sk-HEMMELIG', AI_MODEL: 'claude-haiku-5-5', TEST_EPOST: 'test@eksempel.no' };
+  const lagTj = (svarFn, maks) => {
+    const kall = [], runder = [];
+    const t = f.opoint_kj_lagKiTjeneste(maks || 80, Date.now(), { props: { getProperty: n => props[n] }, cache: null, hash: x => x,
+      fetchMange: bodies => { runder.push(bodies.length); return bodies.map(b => { kall.push(b); return { status: 200, tekst: JSON.stringify({ content: [{ type: 'text', text: svarFn(b, kall.length) }], usage: { input_tokens: 100, output_tokens: 10 } }) }; }); } });
+    t.kallListe = kall; t.runder = runder; return t;
+  };
+  const prio = { kart: f.opoint_kj_prioritetFraRader([['Domene', 'Nivå', 'Åpen'], ['kommunikasjon.ntb.no', 1, 'ja'], ['skipsrevyen.no', 1, 'ja'], ['logistikkinside.no', 2, 'ja']]), kilder: {} };
+
+  // Tillegg 2: andre kilder teller sammenslåtte (identical_documents) med nivå
+  const sr = doc({ id_article: 1, equalgroup: 5, orig_url: 'https://www.skipsrevyen.no/a', header: { text: '420 millioner til tolv batteridrevne skip' }, unix_timestamp: 300, language: { text: 'no' } });
+  const ntb = doc({ id_article: 2, equalgroup: 5, orig_url: 'https://kommunikasjon.ntb.no/p', header: { text: '420 millioner til 12 batteridrevne skip' }, unix_timestamp: 100, language: { text: 'no' } });
+  sr.identical_documents = { cnt: 1, document: [ntb] };
+  const li = doc({ id_article: 3, orig_url: 'https://logistikkinside.no/b', header: { text: '420 millioner kroner til batteribytte' }, unix_timestamp: 200, language: { text: 'no' } });
+  const kand = f.opoint_kj_dedup([{ strom: 'D', navn: 'D1', searchterm: 'd', dokumenter: [sr, li] }], [], prio);
+  f.opoint_kj_settNivaer(kand, prio);
+  const saker = f.opoint_kj_lagSaker(kand, { grupper: [[0, 1]] });
+  assert.strictEqual(saker.length, 1); assert.strictEqual(saker[0].representant.domene, 'kommunikasjon.ntb.no');
+  assert.strictEqual(saker[0].antallTilsvarende, 2); // Skipsrevyen (slått inn) + Logistikk Inside (medlem)
+  assert.strictEqual(saker[0].andreKilder, 'skipsrevyen.no (1), logistikkinside.no (2)');
+
+  // Del 2: språk – saken får representant med tillatt språk; ellers ekskludert
+  const de = doc({ id_article: 10, orig_url: 'https://a.de/1', header: { text: 'Deutsch' }, language: { text: 'de' }, unix_timestamp: 1 });
+  const en = doc({ id_article: 11, orig_url: 'https://b.com/1', header: { text: 'English' }, language: { text: 'en' }, unix_timestamp: 9 });
+  const ja = doc({ id_article: 12, orig_url: 'https://c.jp/1', header: { text: 'Japansk' }, language: { text: 'ja' } });
+  const k2 = f.opoint_kj_dedup([{ strom: 'B', navn: 'B', searchterm: 'b', dokumenter: [de, en, ja] }], []);
+  const s2 = f.opoint_kj_lagSaker(k2, { grupper: [[0, 1]] });
+  assert.strictEqual(s2[0].representant.doc, en); assert.strictEqual(s2[0].sprakEkskludert, '');
+  assert.strictEqual(s2[1].sprakEkskludert, 'ja'); assert.strictEqual(k2[2].sprakEkskludert, 'ja');
+  const tjS = lagTj(() => '{"relevant": true, "kategori": "Annet", "nevner_oss": false, "prioritet": "høy", "irrelevant_grunn": "", "notat": ""}');
+  const kiS = f.opoint_kj_vurderSaker(s2, { sokeord: [] }, tjS, 1);
+  assert.strictEqual(tjS.kallListe.length, 1); // ingen KI for den japanske saken
+  assert.ok(s2[1].kiResultat.kilde.includes('Ekskludert: språk'));
+  const forbS = { kandidater: k2, resultater: [], klient: { antall: () => 0, maksKall: 80, takNadd: () => false }, oppsett: { merknader: [] } };
+  const rS = f.opoint_kj_byggRaderSaker(forbS, s2, { oldest: 1, newest: 2 }, kiS, d);
+  assert.strictEqual(rS.length, 4 + 1); // språk-ekskludert sak vises ikke i saksfanen
+  assert.strictEqual(rS[0][rS[0].indexOf('Ekskludert: språk (artikler per språk)') + 1], 'ja: 1');
+  const aS = f.opoint_kj_byggRaderAlle(forbS, s2, { oldest: 1, newest: 2 }, d);
+  const iGr = aS[2].indexOf('Ekskluderingsgrunn');
+  assert.strictEqual(aS[aS.length - 1][iGr], 'Ekskludert: språk (ja)'); assert.strictEqual(aS[aS.length - 1][12], 'ja');
+
+  // Del 3: prioritet tolkes; ugyldig → middels; parallelle kall i runder på 5; ett kall holdes av
+  assert.strictEqual(f.opoint_kj_tolkRelevans('{"relevant": true, "kategori": "x", "prioritet": "Høy"}').prioritet, 'høy');
+  assert.strictEqual(f.opoint_kj_tolkRelevans('{"relevant": true, "kategori": "x"}').prioritetUgyldig, true);
+  assert.ok(f.opoint_kj_kiSystem().includes('"prioritet"') && f.opoint_kj_kiSystem().includes('minst 100 mill. USD'));
+  const mange = Array.from({ length: 12 }, (_, i) => doc({ id_article: 100 + i, orig_url: 'https://m.no/' + i, header: { text: 'Sak ' + i }, language: { text: 'no' } }));
+  const k3 = f.opoint_kj_dedup([{ strom: 'B', navn: 'B', searchterm: 'b', dokumenter: mange }], []);
+  const s3 = f.opoint_kj_lagSaker(k3, null);
+  const tj3 = lagTj(b => b.messages[0].content.includes('Sak 3') ? '{"relevant": true, "kategori": "Annet"}' : '{"relevant": true, "kategori": "Annet", "prioritet": "middels"}', 10);
+  const ki3 = f.opoint_kj_vurderSaker(s3, { sokeord: [] }, tj3, 1);
+  assert.deepStrictEqual(J(tj3.runder), [5, 4]); // 9 kall (10 − 1 holdt av), parallelt 5 + 4
+  assert.strictEqual(ki3.ikkeVurdert, 3); assert.strictEqual(ki3.ferdig, false);
+  assert.ok(s3[3].kiResultat.kilde.includes('prioritet manglet → middels')); assert.strictEqual(s3[3].kiResultat.prioritet, 'middels');
+
+  // Del 3: sammendrag – inndata bare middels, maks 5 setninger/120 ord, lenke per setning, nytt forsøk
+  s3.forEach((s, i) => { s.kiResultat = { relevant: true, prioritet: i < 2 ? 'høy' : (i < 8 ? 'middels' : 'lav') }; });
+  const inn = f.opoint_kj_sammendragInndata(s3);
+  assert.strictEqual(inn.length, 6); assert.strictEqual(inn[0].nr, 1);
+  const lang = Array.from({ length: 7 }, (_, i) => ({ tekst: 'Setning ' + i + ' ' + 'ord '.repeat(i === 4 ? 100 : 5).trim() + '.', sak: i + 1 }));
+  const tolket = f.opoint_kj_tolkSammendrag(JSON.stringify({ setninger: lang.concat([{ tekst: 'Feil nr', sak: 99 }]) }), inn);
+  assert.ok(tolket.length <= 5); assert.ok(tolket.reduce((a, x) => a + x.tekst.split(' ').length, 0) <= 120);
+  assert.ok(tolket.every(x => x.url.startsWith('https://m.no/')));
+  const tjSm = lagTj((b, n) => n === 1 ? 'beklager' : JSON.stringify({ setninger: [{ tekst: 'Noe skjedde.', sak: 2 }] }));
+  const sm = f.opoint_kj_lagSammendrag(s3, tjSm);
+  assert.strictEqual(sm.reddet, 1); assert.strictEqual(sm.setninger.length, 1); assert.ok(tjSm.kallListe.every(b => b.max_tokens === 600));
+  assert.strictEqual(f.opoint_kj_lagSammendrag(s3.slice(0, 2), lagTj(() => '{}')).melding, 'Ingen middels-saker – ingen seksjon.');
+  const rSm = f.opoint_kj_byggRaderSammendrag(sm);
+  assert.ok(rSm.some(r => r[0] === 'Inndata') && rSm.some(r => r[3] === 'Noe skjedde.'));
+
+  // Del 4: dagens e-post (samme dato som vinduets slutt)
+  const vindu = { oldest: Date.UTC(2026, 10, 18, 6, 30) / 1000, newest: Date.UTC(2026, 10, 19, 6, 30) / 1000 };
+  const apps = { rader: [{ kilde: 'Sendte artikler', tid: Date.UTC(2026, 10, 19, 6, 31), norm: 'm.no/0', tittel: 'x' },
+    { kilde: 'Sendte artikler', tid: Date.UTC(2026, 10, 18, 6, 31), norm: 'm.no/1', tittel: 'y' }] };
+  assert.strictEqual(f.opoint_kj_settDagensEpost(s3, apps, vindu, dd.dagTekst), 1);
+  assert.strictEqual(s3[0].iDagensEpost, true); assert.strictEqual(s3[1].iDagensEpost, false);
+
+  // Del 4: e-post
+  ctx.MC_FONT_STACK = 'Inter'; ['MC_BAKGRUNN_YTRE', 'MC_BAKGRUNN_KORT', 'MC_DEEP_BLUE', 'MC_DEEP_BLUE_200', 'MC_DEEP_BLUE_500', 'MC_DEEP_BLUE_700', 'MC_INNOVATION_BLUE'].forEach(n => ctx[n] = '#000');
+  ctx.escapeHtml = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;'); ctx.escapeAttributt = u => String(u);
+  s3[0].kiResultat.kategori = 'Energi og framdrift'; s3[0].representant.doc.summary = { text: 'Ingen punktum' };
+  s3[1].kiResultat.kategori = 'Annet'; s3[1].representant.doc.summary = { text: '' };
+  s3[0].andreKilderListe = Array.from({ length: 7 }, (_, i) => ({ domene: 'k' + i + '.no', niva: 1 }));
+  const st = { ingenNorske: true };
+  const ep = f.opoint_kj_byggEpost(s3, sm, vindu, String, true, st);
+  assert.ok(ep.html.includes('Opoint (test)') && ep.html.includes('cid:logo'));
+  assert.ok(ep.html.indexOf('Annet') < ep.html.indexOf('Energi og framdrift')); // kategorier alfabetisk
+  assert.ok(ep.html.includes('Ingen punktum…')); assert.ok(ep.html.includes('Andre kilder (7): k0.no, k1.no, k2.no, k3.no, k4.no +2'));
+  assert.ok(ep.html.includes('Også i dagens e-post')); assert.ok(ep.html.includes('Ellers i bransjen'));
+  assert.ok(ep.html.includes('<a href="https://m.no/3"')); // sammendragssetningen lenker til sak 2 i inndata (= s3[3])
+  assert.ok(ep.html.includes('4 øvrige treff i arkfanen.')); assert.ok(ep.html.includes('Ingen nye norskspråklige treff.'));
+  assert.strictEqual(ep.antallHoy, 2); assert.ok(!ep.html.includes('Sak 9')); // lav vises ikke
+  const ep2 = f.opoint_kj_byggEpost(s3.slice(0, 2), { setninger: [], inndata: [] }, vindu, String, false, { ingenNorske: false });
+  assert.ok(!ep2.html.includes('Ellers i bransjen') && !ep2.html.includes('øvrige treff') && !ep2.html.includes('norskspråklige'));
+
+  // Del 4: lagring og sending bare til TEST_EPOST
+  const sendt = [], filer = [];
+  ctx.DriveApp = { createFile: (n, h) => { filer.push(n); return { getUrl: () => 'https://drive/fil' }; } };
+  ctx.MimeType = { HTML: 'text/html' };
+  ctx.GmailApp = { sendEmail: (til, emne) => sendt.push([til, emne]) };
+  ctx.hentLogoBlob = () => ({ blob: null });
+  ctx.PropertiesService = { getScriptProperties: () => ({ getProperty: n => props[n] }) };
+  const r1 = f.opoint_kj_lagreOgSend(ep, vindu, String);
+  assert.strictEqual(r1.driveUrl, 'https://drive/fil'); assert.deepStrictEqual(sendt.map(x => x[0]), ['test@eksempel.no']);
+  assert.ok(sendt[0][1].startsWith('[Opoint-test]'));
+  delete props.TEST_EPOST;
+  const r2 = f.opoint_kj_lagreOgSend(ep, vindu, String);
+  assert.ok(r2.melding.includes('TEST_EPOST mangler')); assert.strictEqual(sendt.length, 1);
+  props.TEST_EPOST = 'test@eksempel.no';
+
+  // Tillegg 3: kontroller ser også sammenslåtte dokumenter; utenfor vindu
+  const k420 = f.OPOINT_KJ_SAKER_KONTROLLER.find(k => k.navn.startsWith('420'));
+  const rh = { doc: doc({ id_article: 4, header: { text: 'Hagland Shipping får 236 millioner til batteridrevne skip' } }), domene: 'radioh.no', sak: 'S1', ekskludert: false, slattSammen: [] };
+  const kk = kand.concat([rh]);
+  const r420 = f.opoint_kj_kontrollerSak(k420, kk, '3-10');
+  assert.strictEqual(r420.status, 'OK'); assert.ok(r420.detalj.includes('skipsrevyen.no [S1, slått inn]'));
+  assert.strictEqual(f.opoint_kj_kontrollerSak(k420, kk, '17-18').status, 'utenfor vindu');
+  const kLaur = f.OPOINT_KJ_SAKER_KONTROLLER.find(k => k.navn.startsWith('Lauritzen'));
+  const laur = [{ doc: doc({ header: { text: 'J. Lauritzen takes delivery of methanol dual-fuel bulker' } }), domene: 'a.com', sak: 'S5', ekskludert: false },
+    { doc: doc({ header: { text: 'Brave Bulker named in Japan' } }), domene: 'b.com', sak: 'S6', ekskludert: false }];
+  assert.strictEqual(f.opoint_kj_kontrollerSak(kLaur, laur, '17-18').status, 'FEIL');
+
+  // Tillegg 4: valgte saker listes med alle medlemmer og sammenslåtte
+  const forbV = { kandidater: kand, resultater: [], klient: { antall: () => 0 }, oppsett: { merknader: [] } };
+  const rv = f.opoint_kj_byggRaderTestSaker(forbV, saker, { melding: 'ok' }, { kall: 1, fraBuffer: 0, kostnad: 0, modell: 'm' },
+    [], { oldest: 1, newest: 2 }, d, '3-10', ['S1', 'S211']);
+  assert.ok(rv.some(r => r[0] === 'S1' && String(r[8]).startsWith('slått inn (identical)')));
+  assert.ok(rv.some(r => r[0] === 'S211' && r[1] === '(finnes ikke i denne kjøringen)'));
+})();
+console.log('Tillegg 2–4 og del 2–4 OK');
