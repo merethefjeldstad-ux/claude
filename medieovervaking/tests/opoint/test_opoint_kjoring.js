@@ -24,7 +24,7 @@ assert.strictEqual((kode.match(/api\.anthropic\.com/g) || []).length, 1); // bar
 assert.ok(!/getSheetByName\((?:FANE_|'Sendte|'Artikkellogg|'Referansesett|'Kjøretidslogg|'Mottakere)/.test(kode));
 // Ingen skriving til beskyttede faner: skrivFane kalles kun med egne fanekonstanter
 (kode.match(/opoint_t3_skrivFane\(ss, ([A-Z0-9_]+)/g) || []).forEach(m =>
-  assert.ok(/OPOINT_(DIAG_FANE|DIAG_FANE_DEKNING|KJOR_FANE|KJOR_FANE_SPORRINGER|KJ_TEST1_FANE|KJ_UKE_FANE|KJ_TEST2_FANE|KJ_TESTD_FANE|KJ_T2B_FANE|KJ_T2C_FANE|KJ_T2DE_FANE|KJOR_FANE_ALLE|KJ_SCAN_FANE|KJ_T420_FANE|KJ_TDEDUP_FANE)$/.test(m.split(', ')[1]), m));
+  assert.ok(/OPOINT_(DIAG_FANE|DIAG_FANE_DEKNING|KJOR_FANE|KJOR_FANE_SPORRINGER|KJ_TEST1_FANE|KJ_UKE_FANE|KJ_TEST2_FANE|KJ_TESTD_FANE|KJ_T2B_FANE|KJ_T2C_FANE|KJ_T2DE_FANE|KJOR_FANE_ALLE|KJ_SCAN_FANE|KJ_T420_FANE|KJ_TDEDUP_FANE|KJ_TRC_FANE)$/.test(m.split(', ')[1]), m));
 assert.strictEqual(f.OPOINT_KJOR_SEND_EPOST, undefined); // e-post er fjernet helt
 
 // --- Body ---
@@ -476,7 +476,10 @@ console.log('Steg 2 (rettet)-tester OK');
   assert.strictEqual(f.opoint_kj_tolkGrupper('tull', 3), null);
   const lang = 'x'.repeat(200);
   const tekst = f.opoint_kj_sakTekst([{ doc: doc({ header: { text: lang }, language: { text: 'en' } }) }]);
-  assert.strictEqual(tekst, '1 [en] ' + 'x'.repeat(120));
+  assert.strictEqual(tekst, '1 [en] ' + 'x'.repeat(120) + ' || s'); // 1c: ingress med
+  const tLang = f.opoint_kj_sakTekst([{ doc: doc({ header: { text: 'T' }, summary: { text: 'y'.repeat(300) } }) }]);
+  assert.strictEqual(tLang, '1 [?] T || ' + 'y'.repeat(200));
+  assert.strictEqual(f.opoint_kj_sakTekst([{ doc: doc({ header: { text: 'T' }, summary: { text: '' } }) }]), '1 [?] T');
 
   // KI-tjeneste med mock: kalltak, buffer, kostnad, nøkkel aldri ut
   let anth = [];
@@ -608,7 +611,7 @@ console.log('Vakt mot direkte kjøring OK');
   });
   const g = f.opoint_kj_grupperSaker(mange, tj);
   assert.deepStrictEqual(J(g.grupper.map(gr => gr.slice().sort((a, b) => a - b))), [[0, 310]]);
-  assert.strictEqual(tj.kallListe.length, 3 + 1); // 3 bolker + ett tverrbolk-kall (320 representanter ≤ 400)
+  assert.strictEqual(tj.kallListe.length, 3 + 3); // 3 bolker + 3 parvise tverrbolk-kall (320 representanter > 300)
   assert.ok(g.melding.includes('slo sammen 1 saker'), g.melding);
   const saker = f.opoint_kj_lagSaker(mange, g);
   assert.strictEqual(saker.length, 319); assert.strictEqual(mange[0].sak, mange[310].sak);
@@ -678,7 +681,7 @@ console.log('420-test, tverrbolk og nytt forsøk OK');
   const g = f.opoint_kj_grupperSaker(mange, tj);
   assert.deepStrictEqual(J(g.grupper.map(x => x.slice().sort((a, b) => a - b))), [[5, 440]]);
   assert.strictEqual(kall.length, 3 + 3); // 3 bolker + 3 bolkpar
-  assert.ok(kall.slice(3).every(b => b.messages[0].content.split('\n').length <= 400));
+  assert.ok(kall.slice(3).every(b => b.messages[0].content.split('\n').length <= 300));
 })();
 console.log('Parvis tverrbolk OK');
 
@@ -697,7 +700,7 @@ console.log('Parvis tverrbolk OK');
     { strom: 'D', navn: 'D1 del 1/2', searchterm: 'd1', dokumenter: [sr, ok4] }];
   const gammel = f.opoint_kj_dedup(res, [], prio, true);
   assert.strictEqual(gammel.length, 2); assert.strictEqual(gammel[0].doc, rh); // første treff vant
-  assert.deepStrictEqual(J(gammel.dedupFjernet), { equalgroup: 3, url: 0 });
+  assert.deepStrictEqual(J(gammel.dedupFjernet), { equalgroup: 3, url: 0, identical: 0 });
   const ny = f.opoint_kj_dedup(res, [], prio);
   assert.strictEqual(ny[0].doc, sr); assert.strictEqual(ny[0].domene, 'skipsrevyen.no'); // nivå 1 vinner
   assert.deepStrictEqual(J(ny[0].strommer), ['C', 'D']);
@@ -714,7 +717,7 @@ console.log('Parvis tverrbolk OK');
   assert.strictEqual(f.opoint_kj_dedup([{ strom: 'B', navn: 'b', searchterm: 'x', dokumenter: [da, db, dc] }], [], p2)[0].doc, dc);
   // URL-dedup telles separat
   const u = f.opoint_kj_dedup([{ strom: 'B', navn: 'b', searchterm: 'x', dokumenter: [doc({ id_article: 1, orig_url: 'https://e.no/1' }), doc({ id_article: 2, orig_url: 'http://www.e.no/1/' })] }], []);
-  assert.deepStrictEqual(J(u.dedupFjernet), { equalgroup: 0, url: 1 });
+  assert.deepStrictEqual(J(u.dedupFjernet), { equalgroup: 0, url: 1, identical: 0 });
 
   // Tak-advarsel ved 100 dokumenter
   const m = klient(b => ok(Array.from({ length: 25 }, (_, i) => doc({ id_article: i + 25 * (Number(b.params.context) || 0) })), String((Number(b.params.context) || 0) + 1)), 10);
@@ -733,3 +736,59 @@ console.log('Parvis tverrbolk OK');
   assert.ok(rr.some(x => x[1] === 'Skipsrevyen' && x[4] === 777 && x[5] === 64));
 })();
 console.log('Dedup etter Kildeprioritet OK');
+
+// ===================== Del 1: identical_documents, range_count, kontroller =====================
+(function () {
+  const prio = { kart: f.opoint_kj_prioritetFraRader([['Domene', 'Nivå', 'Åpen'], ['kommunikasjon.ntb.no', 1, 'ja'], ['skipsrevyen.no', 1, 'ja']]), kilder: {} };
+  const ntb = doc({ id_article: 9, id_site: 5, equalgroup: 8429116321, orig_url: 'https://kommunikasjon.ntb.no/pressemelding/420', header: { text: '420 millioner til 12 batteridrevne skip og to ladeanlegg' }, unix_timestamp: 100 });
+  const sr = doc({ id_article: 1, id_site: 64, equalgroup: 8429116321, orig_url: 'https://www.skipsrevyen.no/a', header: { text: '420 millioner til tolv batteridrevne skip og to ladeanlegg' }, unix_timestamp: 300,
+    identical_documents: { cnt: 1, document: [ntb] } });
+  const res = [{ strom: 'D', navn: 'D1 del 1/2', searchterm: 'd1', dokumenter: [sr] }];
+  // Før (uten utvidelse): NTB er usynlig, Skipsrevyen beholdes
+  const for_ = f.opoint_kj_dedup(res, [], prio, false, true);
+  assert.strictEqual(for_.length, 1); assert.strictEqual(for_[0].doc, sr); assert.strictEqual(for_.dedupFjernet.identical, 0);
+  // Etter: NTB er med i valget og vinner (samme nivå og Åpen, tidligere publisert)
+  const etter = f.opoint_kj_dedup(res, [], prio);
+  assert.strictEqual(etter.length, 1); assert.strictEqual(etter[0].doc, ntb); assert.strictEqual(etter[0].domene, 'kommunikasjon.ntb.no');
+  assert.strictEqual(etter.dedupFjernet.identical, 1); assert.strictEqual(etter.identiskeUtvidet, 1);
+  assert.strictEqual(etter[0].slattSammen[0].doc, sr);
+  // Identical uten equalgroup slås likevel inn i samme kandidat
+  const x = doc({ id_article: 7, orig_url: 'https://z.no/1', header: { text: 'Kopi' } });
+  const hoved = doc({ id_article: 6, orig_url: 'https://y.no/1', header: { text: 'Hoved' }, identical_documents: { cnt: 1, document: [x] } });
+  const k2 = f.opoint_kj_dedup([{ strom: 'B', navn: 'b', searchterm: 'b', dokumenter: [hoved] }], []);
+  assert.strictEqual(k2.length, 1); assert.strictEqual(k2[0].slattSammen.length, 1);
+  // Sporing: NTB skilles fra Skipsrevyen på domene
+  const artNtb = f.OPOINT_KJ_TDEDUP_ARTIKLER[1], artSr = f.OPOINT_KJ_TDEDUP_ARTIKLER[0];
+  assert.strictEqual(f.opoint_kj_erArtikkel(ntb, artSr), false); assert.strictEqual(f.opoint_kj_erArtikkel(ntb, artNtb), true);
+  assert.strictEqual(f.opoint_kj_sporDedup(for_, artNtb).status, 'ikke funnet');
+  assert.strictEqual(f.opoint_kj_sporDedup(etter, artNtb).status, 'beholdt');
+  assert.strictEqual(f.opoint_kj_sporDedup(etter, artSr).status, 'slått sammen (identical)');
+  const forb = { kandidater: etter, resultater: res, klient: { antall: () => 1, takNadd: () => false }, oppsett: { merknader: [] } };
+  const rr = f.opoint_kj_byggRaderTestDedup(forb, for_, { oldest: 1, newest: 2 }, d);
+  assert.ok(rr.some(r => r[1] === 'NTB' && String(r[3]).startsWith('i identical_documents')));
+  assert.ok(rr[0].includes('Før: fjernet av dedup') && rr[0].includes('Etter: identical_documents utvidet'));
+
+  // 1b range_count
+  const rc = f.opoint_kj_byggRaderRangeCount([
+    { navn: 'B ammonia', rangeCount: [12], dokumenter: [doc({ identical_documents: { cnt: 2, document: [] } }), doc({ id_article: 2, identical_documents: { cnt: 0 } })], contextTom: true, batcher: 1, feil: '' },
+    { navn: 'D1 del 1/2', rangeCount: [5], dokumenter: [doc({ identical_documents: { cnt: 3 } })], contextTom: true, batcher: 1, feil: '' },
+    { navn: 'B battery/electric', rangeCount: [300, 300], dokumenter: Array.from({ length: 50 }, () => doc({})), contextTom: false, batcher: 2, feil: '' }
+  ], { oldest: 1, newest: 2 }, klient(() => ok([]), 1).kl, d);
+  assert.strictEqual(rc[4][6], 'NEI (differanse 8)'); assert.strictEqual(rc[4][5], 4);
+  assert.strictEqual(rc[5][6], 'NEI (differanse 1)');
+  assert.ok(rc[6][6].includes('ikke alle hentet'));
+
+  // 1d kontroller: domenebegrensning og felles liste i begge vinduer
+  const kand = [
+    { doc: doc({ header: { text: 'SEA-LNG: EU ETS gives LNG an edge' } }), domene: 'safety4sea.com', sak: 'S1', ekskludert: false },
+    { doc: doc({ header: { text: 'EU ETS and LNG – SEA-LNG view' } }), domene: 'www.cleanshippinginternational.com'.replace('www.', ''), sak: 'S1', ekskludert: false },
+    { doc: doc({ header: { text: 'EU ETS update' } }), domene: 'annen.no', sak: 'S9', ekskludert: false }
+  ];
+  const kSea = f.OPOINT_KJ_SAKER_FELLES_KONTROLLER.find(k => k.navn.startsWith('SEA-LNG'));
+  assert.strictEqual(f.opoint_kj_kontrollerSak(kSea, kand).status, 'OK'); // annen.no telles ikke
+  assert.ok(f.OPOINT_KJ_SAKER1_KONTROLLER.length === 5 + f.OPOINT_KJ_SAKER_FELLES_KONTROLLER.length);
+  assert.ok(f.OPOINT_KJ_SAKER1_KONTROLLER.every(k => k && k.navn));
+  const k420 = f.OPOINT_KJ_SAKER_FELLES_KONTROLLER[0];
+  assert.ok(k420.re[0].test('Hagland Shipping får 236 millioner til batteridrevne skip') && k420.re[0].test('420 millioner kroner til batteribytte'));
+})();
+console.log('Del 1-tester OK');
