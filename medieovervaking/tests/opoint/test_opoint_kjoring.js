@@ -23,7 +23,7 @@ assert.ok(!/newTrigger\(|MailApp\.|textrazor|readership|text:\s*1|api\.anthropic
 assert.ok(!/getSheetByName\((?:FANE_|'Sendte|'Artikkellogg|'Referansesett|'Kjøretidslogg|'Mottakere)/.test(kode));
 // Ingen skriving til beskyttede faner: skrivFane kalles kun med egne fanekonstanter
 (kode.match(/opoint_t3_skrivFane\(ss, ([A-Z0-9_]+)/g) || []).forEach(m =>
-  assert.ok(/OPOINT_(DIAG_FANE|DIAG_FANE_DEKNING|KJOR_FANE|KJOR_FANE_SPORRINGER|KJ_TEST1_FANE)$/.test(m.split(', ')[1]), m));
+  assert.ok(/OPOINT_(DIAG_FANE|DIAG_FANE_DEKNING|KJOR_FANE|KJOR_FANE_SPORRINGER|KJ_TEST1_FANE|KJ_UKE_FANE|KJ_TEST2_FANE)$/.test(m.split(', ')[1]), m));
 assert.strictEqual((kode.match(/GmailApp\.sendEmail/g) || []).length, 1);
 assert.ok(/Session\.getEffectiveUser\(\)\.getEmail\(\)/.test(kode));
 assert.strictEqual(f.OPOINT_KJOR_SEND_EPOST, false);
@@ -64,7 +64,7 @@ assert.ok(A.every(x => !x.searchterm.includes('header:')));
 const alle = f.opoint_kj_byggAlleSporringer(f.OPOINT_T2_SPORRINGER);
 const antD = f.opoint_kj_byggStromD().length;
 assert.strictEqual(alle.length, 13 + 10 + 1 + antD);
-assert.ok(alle[alle.length - 1].searchterm.endsWith('AND site:288,19526,18139,338722,141703')); // alle ukjente → D2
+assert.ok(alle[alle.length - 1].searchterm.endsWith('AND site:19526,18139,338722,141703')); // ukjente → D2, 288 fast D1
 
 // --- Mock-klient ---
 function klient(svarFn, maks) {
@@ -209,14 +209,17 @@ console.log('Alle OpointKjoring-tester OK');
   ];
   const t2 = f.opoint_kj_byggTier2(sokeord);
   const q = J(t2.sporringer.map(x => x.searchterm));
+  // Rettelse a (GASS ANDNOT) og b (* på enkeltord i kontekst, ikke på fraser)
   assert.deepStrictEqual(q.slice(0, 6), [
-    'FLAGSHIPS AND (hydrogen)',
-    'TrAM AND ("elektrisk ferge" OR hurtigferge OR "fast ferry" OR "Maritime CleanTech" OR Medstraum)',
-    'Apollo AND (ammoniakk OR ammonia OR "viking energy" OR Eidesvik OR "Maritime CleanTech")',
-    'GASS AND (artificial OR kunstig OR skip* OR vessel* OR "Maritime CleanTech")',
-    'AWESOME AND ("Kongsberg maritime" OR Odfjell OR "wind assisted" OR "vind-assistert" OR "vind-drevet" OR shipping OR propulsion OR "Maritime CleanTech")',
-    '"zero-emission zone" AND (shipping OR vessel* OR maritime)'
+    'FLAGSHIPS AND (hydrogen*)',
+    'TrAM AND ("elektrisk ferge" OR hurtigferge* OR "fast ferry" OR "Maritime CleanTech" OR Medstraum*)',
+    'Apollo AND (ammoniakk* OR ammonia* OR "viking energy" OR Eidesvik* OR "Maritime CleanTech")',
+    'GASS AND (artificial* OR kunstig* OR skip* OR vessel* OR "Maritime CleanTech") ANDNOT (StealthGas OR "Stealth Gas" OR NASDAQ)',
+    'AWESOME AND ("Kongsberg maritime" OR Odfjell* OR "wind assisted" OR "vind-assistert" OR "vind-drevet" OR shipping* OR propulsion* OR "Maritime CleanTech")',
+    '"zero-emission zone" AND (shipping* OR vessel* OR maritime*)'
   ]);
+  assert.strictEqual(t2.sporringer[3].utenUnntak, 'GASS AND (artificial* OR kunstig* OR skip* OR vessel* OR "Maritime CleanTech")');
+  assert.strictEqual(f.opoint_kj_kontekstLedd('ab'), 'ab'); // under 3 tegn: ingen *
   assert.ok(t2.merknader.some(m => m.includes('"Tom" har ingen kontekstord')));
   assert.ok(t2.merknader.some(m => m.includes('Mulig manglende komma') && m.includes('Eidesvik Maritime CleanTech')));
   assert.ok(t2.merknader.some(m => m.includes('"skip*"')));
@@ -238,6 +241,9 @@ console.log('Alle OpointKjoring-tester OK');
   assert.deepStrictEqual(J(sd), { '288': 'skipsrevyen.no', '19526': 'maritimt.com', '338722': 'logistikkinside.no', '141703': 'energiogklima.no' });
   const tl = f.opoint_kj_tilordneD(sd);
   assert.deepStrictEqual(J(tl.map(t => t.id + t.gruppe)), ['288D1', '19526D1', '18139D2', '338722D2', '141703D2']);
+  // Rettelse c: 288 er D1 også med annet/ukjent domene
+  const tlFast = f.opoint_kj_tilordneD({ '288': 'annet.no' });
+  assert.strictEqual(tlFast[0].gruppe, 'D1'); assert.ok(tlFast[0].kilde.includes('fast'));
   assert.ok(tl[2].domene.includes('ukjent'));
 
   // D-spørringer: maks 15 ord, riktig site-liste
@@ -250,8 +256,8 @@ console.log('Alle OpointKjoring-tester OK');
   const alleTema = D.filter(x => x.navn.startsWith('D1')).map(x => x.searchterm).join(' ');
   f.OPOINT_KJOR_D_TEMAORD.forEach(t => assert.ok(alleTema.includes(t), t));
   assert.ok(alleTema.includes('"EU ETS"') && alleTema.includes('"Maritime CleanTech"'));
-  // Ukjent domene → D2
-  assert.ok(f.opoint_kj_tilordneD({}).every(t => t.gruppe === 'D2'));
+  // Ukjent domene → D2 (unntatt fast D1 for 288)
+  assert.deepStrictEqual(J(f.opoint_kj_tilordneD({}).map(t => t.gruppe)), ['D1', 'D2', 'D2', 'D2', 'D2']);
 
   // Verifisering per gruppe, 0 dokumenter er ikke feil
   let rv = { dokumenter: [doc({ id_site: 288 })], feil: '', merknad: '' };
@@ -265,6 +271,8 @@ console.log('Alle OpointKjoring-tester OK');
   const vindu = { oldest: 1, newest: 2 }, vinduH = { oldest: 3, newest: 4 };
   const m = klient(b => {
     if (b.searchterm === 'GASS') return ok([doc({ header: { text: 'MODENA komfyr på gass' } }), doc({ id_article: 2, header: { text: 'Sykkelritt' } })]);
+    if (b.searchterm.startsWith('GASS AND') && b.params.oldest === 3 && !b.searchterm.includes('ANDNOT'))
+      return ok([doc({ header: { text: 'GASS completes final Business Plan ahead of project conclusion' } }), doc({ id_article: 9, header: { text: 'StealthGas Q3 results (NASDAQ: GASS)' } })]);
     if (b.searchterm.startsWith('GASS AND') && b.params.oldest === 3) return ok([doc({ header: { text: 'GASS completes final Business Plan ahead of project conclusion' } })]);
     if (b.searchterm.startsWith('GASS AND')) return ok([]);
     if (b.searchterm.startsWith('site:')) return ok([doc({ id_site: 288 }), doc({ id_site: 288, id_article: 2 })]);
@@ -275,9 +283,61 @@ console.log('Alle OpointKjoring-tester OK');
   const res = f.opoint_kj_kjorTestSteg1(m.kl, oppsett, vindu, vinduH, () => false);
   const rader = f.opoint_kj_byggRaderTestSteg1(res, oppsett, vindu, vinduH, m.kl, d);
   assert.strictEqual(rader[3][1], 'OK'); assert.ok(rader[3][2].includes('Før: 2'));
-  assert.strictEqual(rader[4][1], 'OK');
-  assert.ok(rader[5][1].startsWith('Før: 2') && rader[5][2].startsWith('Etter (D1+D2): 2'));
+  assert.strictEqual(rader[4][0], 'GASS: StealthGas/NASDAQ borte i 3.–9. nov'); assert.strictEqual(rader[4][1], 'OK');
+  assert.ok(rader[4][2].startsWith('Uten unntak: 1'));
+  assert.strictEqual(rader[5][1], 'OK');
+  assert.ok(rader[6][1].startsWith('Før: 2'));
   assert.ok(m.kall.every(c => !('text' in c.params.main)));
   assert.ok(m.kall.length <= 60);
 })();
 console.log('Steg 1-tester OK');
+
+// ===================== Rettelse d + steg 2 =====================
+(function () {
+  // Strøm B: ny kontekst i alle, tabell kan overstyre
+  const B = f.opoint_kj_byggStromB(false), G = f.opoint_kj_byggStromB(true);
+  assert.strictEqual(B.length, 10);
+  B.forEach(x => assert.ok(x.searchterm.endsWith(' AND ' + f.OPOINT_B_KONTEKST), x.navn));
+  assert.ok(f.OPOINT_B_KONTEKST.includes(') ANDNOT (') && !/AND NOT/.test(f.OPOINT_B_KONTEKST));
+  assert.ok(!f.OPOINT_B_KONTEKST.includes('"e-bike*"'));
+  assert.strictEqual(G[6].searchterm, '(header:battery OR header:electric) AND (ferry OR vessel OR ship)');
+  assert.strictEqual(G[0].searchterm, 'header:ammonia AND (vessel OR ship OR shipping)');
+  f.OPOINT_KJOR_STROM_B_TABELL[1].kontekst = '(tanker*)';
+  assert.strictEqual(f.opoint_kj_byggStromB(false)[1].searchterm, 'header:methanol AND (tanker*)');
+  delete f.OPOINT_KJOR_STROM_B_TABELL[1].kontekst;
+  const alle = f.opoint_kj_byggAlleSporringer(f.OPOINT_T2_SPORRINGER);
+  assert.strictEqual(alle.filter(x => x.strom === 'B').length, 10);
+
+  // Forrige KI fra "Opoint-kjøring"
+  const fk = f.opoint_kj_forrigeKiFraRader([['Vindu'], ['KI'], [''], ['Strøm(mer)', 'Tittel', 'URL', 'KI relevant'],
+    ['B', 'Phone ship', 'https://www.ex.com/a?x', 'ja'], ['B', 'Y', 'https://y.com/b', 'nei']]);
+  assert.strictEqual(fk.antall, 2); assert.strictEqual(fk.kart['ex.com/a'], 'ja');
+
+  // Steg 2-test med simulerte svar
+  const m = klient(b => {
+    const ny = b.searchterm.includes('ANDNOT');
+    if (b.searchterm.startsWith('header:ammonia')) {
+      return ok(ny ? [doc({ id_article: 1, orig_url: 'https://keep.no/1' }), doc({ id_article: 3, orig_url: 'https://new.no/3' })]
+        : [doc({ id_article: 1, orig_url: 'https://keep.no/1' }), doc({ id_article: 2, orig_url: 'https://ex.com/a', url_common: 'ex.com', header: { text: 'Phone ship' } })]);
+    }
+    return ok([]);
+  }, 90);
+  const s2 = f.opoint_kj_kjorTestSteg2(m.kl, { oldest: 1, newest: 2 }, fk, () => false);
+  assert.strictEqual(s2.length, 10); assert.strictEqual(s2[0].borte.length, 1); assert.strictEqual(s2[0].nyeDok, 1);
+  assert.strictEqual(s2[0].borte[0].kiForrige, 'ja'); assert.strictEqual(s2[0].borte[0].domene, 'ex.com');
+  const r2 = f.opoint_kj_byggRaderTestSteg2(s2, { oldest: 1, newest: 2 }, m.kl, fk, d);
+  assert.strictEqual(r2[0][10], 1); assert.strictEqual(r2[0][12], 1);
+  assert.ok(r2.some(r => r[6] === 'KI-RELEVANT FORSVANT'));
+  assert.strictEqual(m.kall.length, 20);
+
+  // Uketest
+  const t2 = f.opoint_kj_byggTier2([{ sokeord: 'FLAGSHIPS', tier: 2, kontekstord: ['hydrogen'] },
+    { sokeord: 'TrAM', tier: 2, kontekstord: ['hurtigferge'] }]);
+  const mu = klient(() => ok([doc({})]), 20);
+  const ru = f.opoint_kj_kjorUke(mu.kl, t2, { oldest: 1, newest: 2 }, () => false);
+  assert.strictEqual(ru.length, 3); assert.strictEqual(ru[0].dokumenter.length, 1);
+  assert.ok(ru[2].feil.includes('zero-emission zone'));
+  assert.strictEqual(mu.kall.length, 2);
+  assert.ok(f.opoint_kj_byggRaderUke(ru, { oldest: 1, newest: 2 }, mu.kl, d).length === 6);
+})();
+console.log('Rettelse d + steg 2-tester OK');
