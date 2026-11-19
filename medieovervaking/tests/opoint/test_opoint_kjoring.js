@@ -902,11 +902,12 @@ console.log('Del 1-tester OK');
   assert.ok(ep.html.includes('Ingen punktum…')); assert.ok(ep.html.includes('Andre kilder (7): k0.no, k1.no, k2.no, k3.no, k4.no +2'));
   assert.ok(ep.html.includes('Også i dagens e-post'));
   assert.ok(ep.html.includes('Ellers i bransjen') && ep.html.includes('<a href="https://m.no/3"'));
-  assert.ok(ep.html.includes('Mulig irrelevant</div>') && ep.html.indexOf('Ellers i bransjen') < ep.html.indexOf('Mulig irrelevant</div>'));
-  assert.ok(ep.html.includes('Ikke maritimt'));
+  // A1: Opoint-irrelevante vises ikke under «Mulig irrelevant», men telles
+  assert.ok(!ep.html.includes('Mulig irrelevant</div>') && !ep.html.includes('Ikke maritimt'));
+  assert.ok(ep.html.includes('1 vurdert som irrelevante, se arkfanen.'));
   assert.ok(ep.html.includes('4 øvrige treff i arkfanen.')); assert.ok(ep.html.includes('Ingen nye norskspråklige treff.'));
   assert.ok(ep.html.includes('Denne e-posten sendes automatisk')); // originalens bunntekst
-  assert.ok(ep.html.includes('1 av 2 kilder hentet OK'));
+  assert.ok(ep.html.includes('Apps Script: ikke kjørt · Opoint: OK (2 spørringer')); // A3
   assert.ok(!ep.html.includes('Sak 4')); // oppfølging er ikke med
   assert.strictEqual(ep.antallHoy, 2); assert.ok(!ep.html.includes('Sak 9')); // lav vises ikke
   assert.ok(ep.tekst.includes('== Ellers i bransjen ==') && ep.tekst.includes('4 øvrige treff i arkfanen.'));
@@ -1116,9 +1117,9 @@ console.log('DEL 3d–e, 4, rapport og recall OK');
   const t = f.opoint_kj_tolkSammendrag('{"setninger": [{"tekst": "Acta Marine bestiller fire CSOV-er.", "sak": 1}]}', inn);
   assert.strictEqual(t[0].kilde, 'Maritime Journal');
   const ep = f.opoint_kj_byggEpost([], { setninger: t, inndata: inn }, { oldest: 1, newest: 2 }, String, false, {}, []);
-  assert.ok(ep.html.includes('Acta Marine bestiller fire CSOV-er. (<a href="https://mj.com/a"'));
-  assert.ok(ep.html.includes('>Maritime Journal</a>)'));
+  assert.ok(ep.html.includes('Acta Marine bestiller fire CSOV-er (<a href="https://mj.com/a"'));
+  assert.ok(ep.html.includes('>Maritime Journal</a>).'));
   assert.ok(!/<a [^>]*>Acta Marine/.test(ep.html)); // setningen er ikke lenke
-  assert.ok(ep.tekst.includes('Acta Marine bestiller fire CSOV-er. (Maritime Journal: https://mj.com/a)'));
+  assert.ok(ep.tekst.includes('Acta Marine bestiller fire CSOV-er (Maritime Journal: https://mj.com/a).'));
 })();
 console.log('DEL A2 og A4 OK');

@@ -641,6 +641,7 @@ function opoint_kjor() {
       ki = opoint_kj_vurderSaker(saker, forb.oppsett, tjeneste, 1, vindu);   // ett kall holdes av til sammendraget
       ki.gruppering = grupper.melding;
       if (ki.ferdig) {
+        ekstra.imoMelding = opoint_kj_imoVinkling(saker, tjeneste, vindu).melding;
         ekstra.sammendrag = opoint_kj_lagSammendrag(saker, tjeneste);
         ekstra.sammendragMelding = ekstra.sammendrag.melding;
         ki.kall = tjeneste.kall; ki.kostnad = tjeneste.kostnad; ki.fraBuffer = tjeneste.fraBuffer;
@@ -819,6 +820,8 @@ function opoint_kj_lagKiTjeneste(maksKall, startMs, avh) {
     if (!cache || !r.tekst) return;
     try { cache.put(nokkel, JSON.stringify({ t: r.tekst, s: r.stopReason, i: r.inputTokens, o: r.outputTokens, m: r.maxTokens }), 21600); } catch (e) { /* for stor */ }
   };
+  /** Fellesløpet: flytt fristen (absolutt tid i ms). */
+  t.settFrist = function (ms) { a.frist = ms; t.stoppet = ''; };
   /** Del 1a: registrer en parsefeil (skrives til fanen «KI-feil» av opoint_kj_skrivKiFeil). */
   t.loggParseFeil = function (kall, res, forsok) {
     t.kiFeil.push({ tid: new Date(), kall: kall, forsok: forsok || 1, raa: res && res.tekst !== undefined ? String(res.tekst) : '',
@@ -833,7 +836,7 @@ function opoint_kj_lagKiTjeneste(maksKall, startMs, avh) {
     if (!t.klar) return { ok: false, feil: 'ANTHROPIC_API_KEY og/eller AI_MODEL mangler i Script Properties.' };
     if (t.stoppet) return { ok: false, feil: t.stoppet };
     if (t.kall >= maksKall) { t.stoppet = 'KI-kalltaket (' + maksKall + ') nådd.'; return { ok: false, feil: t.stoppet }; }
-    if (naa() - startMs > OPOINT_KJOR_TIDSBUDSJETT_MS) { t.stoppet = 'Tidsbudsjett brukt opp – kjør på nytt for å fortsette (gjenopptak).'; return { ok: false, feil: t.stoppet }; }
+    if (naa() - startMs > OPOINT_KJOR_TIDSBUDSJETT_MS || (a.frist && naa() > a.frist)) { t.stoppet = 'Tidsbudsjett brukt opp – kjør på nytt for å fortsette (gjenopptak).'; return { ok: false, feil: t.stoppet }; }
     var svar;
     try {
       svar = fetch({ model: modell, max_tokens: maxTokens, system: system, messages: [{ role: 'user', content: brukerTekst }] });
@@ -883,7 +886,7 @@ function opoint_kj_lagKiTjeneste(maksKall, startMs, avh) {
     for (var s = 0; s < ko.length; s += OPOINT_KJ_KI_PARALLELT) {
       var feil = !t.klar ? 'ANTHROPIC_API_KEY og/eller AI_MODEL mangler i Script Properties.' : t.stoppet;
       if (!feil && t.kall >= tak) feil = 'KI-kalltaket (' + tak + ') nådd.';
-      if (!feil && naa() - startMs > OPOINT_KJOR_TIDSBUDSJETT_MS) { t.stoppet = 'Tidsbudsjett brukt opp – kjør på nytt for å fortsette (gjenopptak).'; feil = t.stoppet; }
+      if (!feil && (naa() - startMs > OPOINT_KJOR_TIDSBUDSJETT_MS || (a.frist && naa() > a.frist))) { t.stoppet = 'Tidsbudsjett brukt opp – kjør på nytt for å fortsette (gjenopptak).'; feil = t.stoppet; }
       var bit = ko.slice(s, s + Math.min(OPOINT_KJ_KI_PARALLELT, Math.max(tak - t.kall, 0)));
       if (feil || !bit.length) {
         ko.slice(s).forEach(function (q) { ut[q.i] = { ok: false, feil: feil || ('KI-kalltaket (' + tak + ') nådd.') }; });
@@ -1168,6 +1171,17 @@ var OPOINT_KJOR_SPRAK_NORSK = ['no', 'nb', 'nn'];
 
 function opoint_kj_sprak(doc) { return String(opoint_language(doc && doc.language) || '').toLowerCase(); }
 
+/** A6: tittel med STORE BOKSTAVER (minst 3 bokstavord og ≥ 80 % av bokstavene store). */
+function opoint_kj_erVersaler(t) {
+  var b = String(t || '').replace(/[^A-Za-zÆØÅæøåÄÖÜäöüÉé]/g, '');
+  if (b.length < 12) return false;
+  var store = b.replace(/[^A-ZÆØÅÄÖÜÉ]/g, '').length;
+  return store / b.length >= 0.8;
+}
+
+/** Dokumentet som vises for saken (A6 kan velge et sammenslått dokument med normal skrivemåte). */
+function opoint_kj_visDoc(sak) { return sak.visDoc || sak.representant.doc; }
+
 /**
  * Lager saker. grupper = null → hver ikke-ekskludert artikkel er egen sak.
  * Representant: beste etter prioritetsregelen blant artiklene med tillatt språk;
@@ -1194,8 +1208,22 @@ function opoint_kj_lagSaker(kandidater, grupper) {
   saker.forEach(function (sak, si) {
     sak.id = 'S' + (si + 1);
     var sortert = sak.medlemmer.slice().sort(opoint_kj_representantSortering);
-    var tillatt = sortert.filter(function (k) { return OPOINT_KJOR_SPRAK_TILLATT.indexOf(opoint_kj_sprak(k.doc)) >= 0; });
+    var tillatt = sortert.filter(function (k) { return k.erAS || OPOINT_KJOR_SPRAK_TILLATT.indexOf(opoint_kj_sprak(k.doc)) >= 0; });
     sak.representant = tillatt.length ? tillatt[0] : sortert[0];
+    // A6: er representantens tittel skrevet med STORE BOKSTAVER, velges et annet medlem med samme
+    // nivå og Åpen og normal skrivemåte. Dedupen (hvilket dokument hver kandidat har) endres ikke.
+    if (opoint_kj_erVersaler(opointTekstFelt(sak.representant.doc.header))) {
+      var r0 = sak.representant;
+      var alt = (tillatt.length ? tillatt : sortert).filter(function (k) {
+        return k !== r0 && (k.niva || 3) === (r0.niva || 3) && k.apen === r0.apen && !opoint_kj_erVersaler(opointTekstFelt(k.doc.header));
+      })[0];
+      if (alt) { sak.representant = alt; sak.casingByttet = 'medlem'; }
+      else {
+        // Ingen medlem: bruk et dokument dedupen slo inn (samme sak) med samme nivå, bare for visning
+        var inn = (r0.slattSammen || []).filter(function (m) { return (m.niva || 3) === (r0.niva || 3) && !opoint_kj_erVersaler(opointTekstFelt(m.doc.header)); })[0];
+        if (inn) { sak.visDoc = inn.doc; sak.casingByttet = 'sammenslått dokument (' + inn.domene + ')'; }
+      }
+    }
     sak.sprakEkskludert = tillatt.length ? '' : (opoint_kj_sprak(sortert[0].doc) || 'ukjent');
     sak.medlemmer.forEach(function (k) { k.sak = sak.id; if (sak.sprakEkskludert) k.sprakEkskludert = sak.sprakEkskludert; });
     sak.representant.erRepresentant = true;
@@ -1427,6 +1455,14 @@ function opoint_kj_vurderSaker(saker, oppsett, tjeneste, reserver, vindu) {
   ko.forEach(function (sak) {
     var r = { relevant: null, kategori: '', nevnerOss: false, prioritet: '', prioritetGrunn: '', irrelevantGrunn: '', notat: '', kilde: '', tegn: 0, feil: '' };
     sak.kiResultat = r;
+    if (sak.asTreff) {   // Fellesløpet: Apps Script-søkeord og -relevansvurdering beholdes, ingen ny KI
+      var a0 = sak.asTreff;
+      r.relevant = a0.aiRelevant !== false; r.kategori = a0.aiKategori || ''; r.nevnerOss = !!a0.aiNevnerOss;
+      r.prioritet = r.relevant ? 'høy' : 'lav'; r.irrelevantGrunn = a0.aiIrrelevantGrunn || ''; r.notat = a0.aiNotat || '';
+      r.kilde = 'Apps Script' + (a0.aiRelevant === null || a0.aiRelevant === undefined ? ' (ikke KI-vurdert)' : '');
+      r.prioritetGrunn = 'Apps Script-treff (vises som i originalen)';
+      return;
+    }
     if (sak.sprakEkskludert) { r.kilde = 'Ekskludert: språk (' + sak.sprakEkskludert + ')'; return; }
     if (sak.oppfolging) { r.kilde = 'Oppfølging (eldste artikkel før vinduet) – ingen KI'; return; }
     var fastNavn = [];
@@ -1487,7 +1523,7 @@ function opoint_kj_vurderSaker(saker, oppsett, tjeneste, reserver, vindu) {
     r.kilde = (x.fraBuffer ? 'KI (fra buffer)' : 'KI') + (t.relevant && t.prioritetUgyldig ? ', prioritet manglet → middels' : '');
   });
   saker.forEach(function (sak) {
-    if (sak.sprakEkskludert || sak.oppfolging) return;
+    if (sak.sprakEkskludert || sak.oppfolging || sak.asTreff) return;
     if (sak.kiResultat && sak.kiResultat.tvil) ki.tvil++;
     if (sak.kiResultat && (sak.kiResultat.relevant === true || sak.kiResultat.relevant === false)) ki.vurdert++;
     else ki.ikkeVurdert++;
@@ -1538,8 +1574,35 @@ var OPOINT_KJ_OMTALT_SYSTEM =
   'vedtak), også på et annet språk. Samme selskap eller tema er ikke nok. Er du i tvil: ikke merk.\n\nSvar KUN med JSON, ' +
   'uten kodeblokk: {"treff": [{"ny": 3, "tidligere": "T12"}]}. Ingen treff: {"treff": []}.';
 
-/** Leser "Sendte artikler" mellom fraMs og tilMs (kun lesing). */
+// DEL D: historikk for Oppfølging/Omtalt tidligere (opprettes av FellesTest.gs)
+var OPOINT_FANE_SENDTE_SAKER = 'Sendte saker';
+var OPOINT_SENDTE_SAKER_KOLONNER = ['Dato sendt', 'Gruppe-ID', 'Representant-URL', 'Alle URL-er', 'Tittel', 'Ingress', 'Prioritet', 'Merknad'];
+
+/** Leser «Sendte saker» mellom fraMs og tilMs, eller null hvis fanen ikke finnes. */
+function opoint_kj_lesSendteSaker(ss, fraMs, tilMs) {
+  var ark = ss.getSheetByName(OPOINT_FANE_SENDTE_SAKER);
+  if (!ark) return null;
+  if (ark.getLastRow() < 2) return [];
+  return opoint_kj_sendteSakerFraRader(ark.getDataRange().getValues(), fraMs, tilMs);
+}
+
+function opoint_kj_sendteSakerFraRader(data, fraMs, tilMs) {
+  var ut = [];
+  data.slice(1).forEach(function (r) {
+    var t = r[0];
+    var ms = Object.prototype.toString.call(t) === '[object Date]' ? t.getTime() : Date.parse(t);
+    if (!(ms >= fraMs && ms < tilMs)) return;
+    var urler = String(r[3] || '').split(/\s+/).filter(function (x) { return x; });
+    ut.push({ tid: ms, norm: opoint_kj_normUrl(r[2]), normer: urler.map(opoint_kj_normUrl), url: String(r[2] || ''),
+      tittel: String(r[4] || ''), ingress: String(r[5] || ''), gruppe: String(r[1] || ''), merknad: String(r[7] || '') });
+  });
+  return ut;
+}
+
+/** Leser tidligere sendte saker: «Sendte saker» hvis fanen finnes, ellers "Sendte artikler" (kun lesing). */
 function opoint_kj_lesSendte(ss, fraMs, tilMs) {
+  var fraSaker = opoint_kj_lesSendteSaker(ss, fraMs, tilMs);
+  if (fraSaker !== null) return fraSaker;
   var ark = ss.getSheetByName(OPOINT_KJOR_FANE_SENDTE);
   if (!ark || ark.getLastRow() < 2) return [];
   var data = ark.getDataRange().getValues();
@@ -1563,7 +1626,7 @@ function opoint_kj_settOmtaltTidligere(saker, sendte, tjeneste) {
     sak.medlemmer.forEach(function (m) { docs.push(m.doc); (m.slattSammen || []).forEach(function (x) { docs.push(x.doc); }); });
     docs.some(function (doc) {
       var norm = opoint_kj_normUrl(opoint_t3_artikkelUrl(doc));
-      var t = norm ? sendte.filter(function (r) { return r.norm === norm; })[0] : null;
+      var t = norm ? sendte.filter(function (r) { return r.norm === norm || (r.normer && r.normer.indexOf(norm) >= 0); })[0] : null;
       if (t) { sak.omtaltTidligere = 'URL: «' + opointKort(t.tittel, 80) + '»'; ut.url++; }
       return !!t;
     });
@@ -1574,7 +1637,9 @@ function opoint_kj_settOmtaltTidligere(saker, sendte, tjeneste) {
     ut.melding = 'URL-treff ' + ut.url + '; KI ikke brukt (' + (!sendteListe.length ? 'ingen sendte saker siste ' + OPOINT_KJ_OMTALT_DAGER + ' dager' : 'ingen saker igjen') + ').';
     return ut;
   }
-  var tidl = sendteListe.map(function (r, i) { return 'T' + (i + 1) + ' ' + opointKort(r.tittel.replace(/\s+/g, ' ').trim(), 140); }).join('\n');
+  var tidl = sendteListe.map(function (r, i) {
+    return 'T' + (i + 1) + ' ' + opointKort(r.tittel.replace(/\s+/g, ' ').trim(), 140) + (r.ingress ? ' || ' + opointKort(r.ingress, 150) : '');
+  }).join('\n');
   for (var s = 0; s < rest.length; s += OPOINT_KJ_OMTALT_PER_KALL) {
     var bit = rest.slice(s, s + OPOINT_KJ_OMTALT_PER_KALL);
     var nye = bit.map(function (sak, i) {
@@ -1653,6 +1718,8 @@ function opoint_kj_statistikk(forb, saker, ki) {
     if (sak.iDagensEpost) st.iDagensEpost++;
   });
   st.ingenNorske = st.norske === 0;
+  st.dokumenter = k.raaDokumenter + (k.identiskeUtvidet || 0);
+  st.grupper = saker.length;
   return st;
 }
 
@@ -1686,7 +1753,7 @@ function opoint_kj_byggRaderSaker(forb, saker, vindu, ki, d, ekstra) {
     'Norskspråklige treff', st.ingenNorske ? 'Ingen nye norskspråklige treff' : st.norske,
     'Modell-ID', ki.modell, 'Promptversjon', ki.promptversjon]);
   rader.push(['KI', ki.melding, 'Saksgruppering', ki.gruppering || '(ikke kjørt)', 'Sammendrag', e.sammendragMelding || '(ikke laget)',
-    'Omtalt tidligere', e.omtaltMelding || '', 'E-post', e.epostMelding || '(ikke sendt)', 'HTML i Drive', e.driveUrl || '', 'Parsefeil logget i «KI-feil»', e.kiFeil || 0, 'Ekskluderte domener',
+    'Omtalt tidligere', e.omtaltMelding || '', 'IMO-vinkling', e.imoMelding || '', 'E-post', e.epostMelding || '(ikke sendt)', 'HTML i Drive', e.driveUrl || '', 'Parsefeil logget i «KI-feil»', e.kiFeil || 0, 'Ekskluderte domener',
     Object.keys(eksklDom).map(function (x) { return x + ' ×' + eksklDom[x]; }).join('; '),
     'Merknader', forb.oppsett.merknader.join(' | '), 'KI-feil', opointKort((ki.feil || []).join(' | '), 300)]);
   rader.push(['']);
@@ -1694,7 +1761,7 @@ function opoint_kj_byggRaderSaker(forb, saker, vindu, ki, d, ekstra) {
     'Antall tilsvarende saker', 'Andre kilder', 'KI relevant', 'Kategori', 'Nevner oss', 'Notat', 'Irrelevant grunn',
     'Ingress inneholder søkeord', 'Tegn sendt til KI', 'Vurdert av', 'Apps Script-status', 'Min vurdering',
     'Apps Script-årsak/treff', 'id_site', 'Spørringer', 'Prioritet', 'Også i dagens e-post', 'Prioritet – begrunnelse',
-    'Oppfølging', 'Omtalt tidligere', 'Tidligste publisering i gruppen']);
+    'Oppfølging', 'Omtalt tidligere', 'Tidligste publisering i gruppen', 'IMO-vinkelgruppe (A5)', 'Skrivemåte (A6)']);
   viste.forEach(function (sak) {
     var r = sak.representant, doc = r.doc, ts = doc.unix_timestamp, kr = sak.kiResultat || {};
     rader.push([sak.id, sak.strommer.join(', '), typeof ts === 'number' ? d.fmtSek(ts) : '', opointTekstFelt(doc.header),
@@ -1706,7 +1773,9 @@ function opoint_kj_byggRaderSaker(forb, saker, vindu, ki, d, ekstra) {
       (kr.kilde || kr.feil || '') + (kr.reddet ? ' (reddet ved nytt forsøk)' : ''),
       r.appsStatus, '', r.appsArsak, doc.id_site !== undefined ? doc.id_site : '', r.sporringer.join(' | '),
       kr.relevant === true ? (kr.prioritet || 'middels') : '', sak.iDagensEpost ? 'ja' : '', kr.prioritetGrunn || '',
-      sak.oppfolging ? 'ja' : '', sak.omtaltTidligere || '', typeof sak.tidligst === 'number' ? d.fmtSek(sak.tidligst) : '']);
+      sak.oppfolging ? 'ja' : '', sak.omtaltTidligere || '', typeof sak.tidligst === 'number' ? d.fmtSek(sak.tidligst) : '',
+      sak.imoGruppe ? sak.imoGruppe.id + ' «' + sak.imoGruppe.overskrift + '» (' + sak.imoGruppe.prioritet + '): ' + sak.imoGruppe.begrunnelse : '',
+      sak.casingByttet ? 'Vist med normal skrivemåte fra ' + sak.casingByttet : '']);
   });
   return rader;
 }
@@ -1789,14 +1858,16 @@ function opoint_kj_byggRaderRapport(forb, saker, d) {
   });
   rader.push(['']);
   rader.push(['5) IMO NZF / MEPC-klyngen (tittel eller ingress nevner net-zero framework, NZF eller MEPC)']);
-  rader.push(['Sak', 'Prioritet', 'Begrunnelse', 'Status', 'Tittel', 'Domene', 'Antall tilsvarende']);
+  rader.push(['Sak', 'Prioritet', 'Begrunnelse', 'Status', 'Tittel', 'Domene', 'Antall tilsvarende', 'Vinkelgruppe', 'Gruppens prioritet og begrunnelse']);
   var re = /net[- ]zero framework|NZF|MEPC/i;
   saker.forEach(function (s) {
     var treff = s.medlemmer.some(function (m) { return re.test(opointTekstFelt(m.doc.header) + ' ' + opoint_kj_ingress(m.doc)); });
     if (!treff) return;
     var r = s.kiResultat || {};
     rader.push([s.id, r.relevant === true ? (r.prioritet || 'middels') : '', r.prioritetGrunn || '', opoint_kj_sakStatus(s),
-      opointTekstFelt(s.representant.doc.header), s.representant.domene, s.antallTilsvarende]);
+      opointTekstFelt(s.representant.doc.header), s.representant.domene, s.antallTilsvarende,
+      s.imoGruppe ? s.imoGruppe.id + ' «' + s.imoGruppe.overskrift + '»' : '',
+      s.imoGruppe ? s.imoGruppe.prioritet + ': ' + s.imoGruppe.begrunnelse : '']);
   });
   return rader;
 }
@@ -1837,15 +1908,30 @@ var OPOINT_KJ_SAMMENDRAG_SYSTEM =
   OPOINT_KJ_SAMMENDRAG_MAKS_SETNINGER + '.\n\nSvar KUN med JSON, uten kodeblokk: {"setninger": [{"tekst": "...", "sak": 1}]}. ' +
   'Bruk aldri doble anførselstegn (") inne i tekstene – bruk «» i stedet.';
 
-/** Inndata: middels-saker (relevant = ja, prioritet middels). */
+/**
+ * Inndata: middels-saker (relevant = ja, prioritet middels), ikke Apps Script-saker.
+ * A5: IMO-saker i en vinkelgruppe tas ikke med enkeltvis; middels-grupper blir ett punkt.
+ */
 function opoint_kj_sammendragInndata(saker) {
-  return saker.filter(function (s) {
-    return !s.sprakEkskludert && !s.oppfolging && s.kiResultat && s.kiResultat.relevant === true && (s.kiResultat.prioritet || 'middels') === 'middels';
-  }).map(function (s, i) {
-    var doc = s.representant.doc;
-    return { nr: i + 1, sak: s.id, tittel: opointTekstFelt(doc.header).replace(/\s+/g, ' ').trim(), ingress: opoint_kj_sakIngress(s).tekst,
-      url: opoint_t3_artikkelUrl(doc), kilde: opoint_kj_kildeNavn(s.representant) };
+  var ut = [], sett = {};
+  saker.forEach(function (s) {
+    if (s.asTreff || s.sprakEkskludert || s.oppfolging || !s.kiResultat || s.kiResultat.relevant !== true) return;
+    var g = s.imoGruppe;
+    if (g) {
+      if (g.prioritet !== 'middels' || sett[g.id]) return;
+      sett[g.id] = true;
+      var r0 = g.saker[0];
+      ut.push({ sak: g.id, tittel: g.overskrift, ingress: g.oppsummering, url: opoint_t3_artikkelUrl(opoint_kj_visDoc(r0)),
+        kilde: opoint_kj_kildeNavn(r0.representant) });
+      return;
+    }
+    if ((s.kiResultat.prioritet || 'middels') !== 'middels') return;
+    var doc = opoint_kj_visDoc(s);
+    ut.push({ sak: s.id, tittel: opointTekstFelt(doc.header).replace(/\s+/g, ' ').trim(), ingress: opoint_kj_sakIngress(s).tekst,
+      url: opoint_t3_artikkelUrl(doc), kilde: opoint_kj_kildeNavn(s.representant) });
   });
+  ut.forEach(function (x, i) { x.nr = i + 1; });
+  return ut;
 }
 
 /** Tolker og strammer inn: maks 5 setninger, maks 120 ord, gyldig saksnummer. null ved parsefeil. */
@@ -1906,6 +1992,100 @@ function opoint_kj_kildeNavn(k) {
   return fs.sitename || fs.name || k.domene || '';
 }
 
+// ---------------------------------------------------------------------
+// A5: IMO Net-Zero Framework / MEPC 85 – sammenslåing etter vinkling
+// ---------------------------------------------------------------------
+
+// 'vinkling' (standard): IMO-sakene grupperes etter vinkling, ett kort per gruppe.
+// 'ingen': hver sak eget kort (som før), for sammenligning.
+var OPOINT_IMO_SAMLING = 'vinkling';
+var OPOINT_IMO_SAMLING_TIL = '2026-12-04';   // MEPC 85 avsluttet; gjelder til og med denne datoen (Oslo)
+var OPOINT_IMO_MAKS_GRUPPER = 4;
+var OPOINT_IMO_RE = /net[- ]zero framework|\bNZF\b|\bMEPC\b/i;
+var OPOINT_IMO_SYSTEM =
+  'Du grupperer nyhetssaker om IMO Net-Zero Framework / MEPC 85 etter VINKLING. Du får nummererte saker med overskrift, ' +
+  'ingress og kilde. Typiske vinklinger: (1) opprop og uttalelser fra organisasjoner/koalisjoner før MEPC 85 (BIMCO, ICS, ' +
+  'INTERTANKO, CIMAC, IBIA, WSC, NGO-er m.fl.), (2) analyser, kommentarer og opinion, (3) politiske posisjoner og ' +
+  'forhandlingsprosess (EU, land, rederiforbund), (4) selve møtet og beslutninger. Du kan bruke andre vinklinger hvis ' +
+  'stoffet tilsier det. Maks ' + OPOINT_IMO_MAKS_GRUPPER + ' grupper; hver sak i nøyaktig én gruppe.\n\n' +
+  'For hver gruppe: "overskrift" (kort, norsk, maks 8 ord), "oppsummering" (2–3 setninger på norsk, KUN basert på ' +
+  'overskriftene og ingressene – ingen tall, navn eller årsaker som ikke står der), "aktorer" (organisasjonene/aktørene ' +
+  'som står bak, slik de er navngitt i teksten), "prioritet": "høy" hvis minst én sak har ny informasjon av stor betydning ' +
+  '(beslutning, uttalelse fra bransjeorganisasjon før MEPC 85, norsk aktør), ellers "middels" (evergreen, «explained», ' +
+  'analyse uten ny informasjon), og "begrunnelse" (én linje).\n\nSvar KUN med JSON, uten kodeblokk: {"grupper": ' +
+  '[{"vinkling": "...", "overskrift": "...", "oppsummering": "...", "aktorer": ["..."], "prioritet": "høy", ' +
+  '"begrunnelse": "...", "saker": [1, 3]}]}. Bruk aldri doble anførselstegn (") inne i tekstene – bruk «» i stedet.';
+
+function opoint_kj_imoAktiv(vindu) {
+  if (OPOINT_IMO_SAMLING !== 'vinkling') return false;
+  var til = Date.parse(OPOINT_IMO_SAMLING_TIL + 'T23:59:59+01:00');
+  return !vindu || vindu.oldest * 1000 <= til;
+}
+
+/** IMO-saker: relevante Opoint-saker (ikke Apps Script, ikke språk/oppfølging) med NZF/MEPC i tittel eller ingress. */
+function opoint_kj_imoSaker(saker) {
+  return saker.filter(function (s) {
+    if (s.asTreff || s.sprakEkskludert || s.oppfolging || !s.kiResultat || s.kiResultat.relevant !== true) return false;
+    return s.medlemmer.some(function (m) { return OPOINT_IMO_RE.test(opointTekstFelt(m.doc.header) + ' ' + opoint_kj_ingress(m.doc)); });
+  });
+}
+
+/** Tolker IMO-svaret. null ved parsefeil. */
+function opoint_kj_tolkImo(tekst, antall) {
+  var o = opoint_kj_parseJson(tekst);
+  if (!o || !Array.isArray(o.grupper)) return null;
+  var brukt = {}, ut = [];
+  o.grupper.slice(0, OPOINT_IMO_MAKS_GRUPPER).forEach(function (g) {
+    if (!g) return;
+    var nr = (Array.isArray(g.saker) ? g.saker : []).map(Number).filter(function (n) { return n >= 1 && n <= antall && !brukt[n] && (brukt[n] = true); });
+    if (!nr.length) return;
+    var pri = String(g.prioritet || '').toLowerCase().replace('hoy', 'høy');
+    ut.push({ vinkling: String(g.vinkling || ''), overskrift: String(g.overskrift || g.vinkling || 'IMO Net-Zero Framework'),
+      oppsummering: String(g.oppsummering || '').replace(/\s+/g, ' ').trim(),
+      aktorer: Array.isArray(g.aktorer) ? g.aktorer.map(String) : [], prioritet: pri === 'høy' ? 'høy' : 'middels',
+      begrunnelse: String(g.begrunnelse || ''), nr: nr });
+  });
+  return ut;
+}
+
+/**
+ * Grupperer IMO-sakene etter vinkling (ett KI-kall, ett nytt forsøk ved parsefeil).
+ * Setter sak.imoGruppe. Saker uten gruppe beholdes som egne kort.
+ */
+function opoint_kj_imoVinkling(saker, tjeneste, vindu) {
+  var ut = { grupper: [], melding: '' };
+  if (!opoint_kj_imoAktiv(vindu)) { ut.melding = 'Av (' + (OPOINT_IMO_SAMLING !== 'vinkling' ? 'OPOINT_IMO_SAMLING = ' + OPOINT_IMO_SAMLING : 'etter ' + OPOINT_IMO_SAMLING_TIL) + ').'; return ut; }
+  var imo = opoint_kj_imoSaker(saker);
+  if (imo.length < 2) { ut.melding = imo.length + ' IMO-sak(er) – ingen sammenslåing.'; return ut; }
+  var tekst = imo.map(function (s, i) {
+    var d0 = opoint_kj_visDoc(s);
+    return (i + 1) + '. ' + opointTekstFelt(d0.header).replace(/\s+/g, ' ').trim() + ' || ' + opoint_kj_sakIngress(s).tekst + ' || Kilde: ' + opoint_kj_kildeNavn(s.representant);
+  }).join('\n');
+  var sv = tjeneste.spor('imo', OPOINT_IMO_SYSTEM, tekst, 1500);
+  var g = sv.ok ? opoint_kj_tolkImo(sv.tekst, imo.length) : null;
+  if (sv.ok && !g) {
+    tjeneste.loggParseFeil('IMO-vinkling', sv, 1);
+    sv = tjeneste.spor('imo2', OPOINT_IMO_SYSTEM, tekst, 3000);
+    g = sv.ok ? opoint_kj_tolkImo(sv.tekst, imo.length) : null;
+    if (sv.ok && !g) tjeneste.loggParseFeil('IMO-vinkling', sv, 2);
+  }
+  if (!sv.ok) { ut.melding = 'IMO-vinkling feilet: ' + sv.feil + ' – hver sak eget kort.'; return ut; }
+  if (!g) { ut.melding = 'IMO-vinkling kunne ikke tolkes – hver sak eget kort.'; return ut; }
+  g.forEach(function (gr, gi) {
+    gr.id = 'IMO' + (gi + 1);
+    gr.saker = gr.nr.map(function (n) { return imo[n - 1]; });
+    gr.saker.forEach(function (s) { s.imoGruppe = gr; });
+    ut.grupper.push(gr);
+  });
+  ut.melding = imo.length + ' IMO-saker i ' + ut.grupper.length + ' vinkelgrupper (' +
+    ut.grupper.map(function (x) { return x.overskrift + ': ' + x.saker.length + ', ' + x.prioritet; }).join('; ') + ').';
+  return ut;
+}
+
+// ---------------------------------------------------------------------
+// E-post (A1, A3, A5 og felleskjøring): originalens byggEpostHtmlMerkevare
+// ---------------------------------------------------------------------
+
 /** Kort søkeordtekst for kortet: hovedleddene i spørringene som traff (maks 3). */
 function opoint_kj_sokeordFor(sak) {
   var ut = [];
@@ -1917,43 +2097,102 @@ function opoint_kj_sokeordFor(sak) {
   return ut.slice(0, 3);
 }
 
+/** «Andre kilder (N): a, b … +M» for en sak, eller ''. */
+function opoint_kj_andreKilderTekst(sak) {
+  var andre = (sak && sak.andreKilderListe) || [];
+  return andre.length ? 'Andre kilder (' + andre.length + '): ' + andre.slice(0, 5).map(function (x) { return x.domene; }).join(', ') +
+    (andre.length > 5 ? ' +' + (andre.length - 5) : '') : '';
+}
+
 /**
- * Del 5: e-posten bygges med originalens byggEpostHtmlMerkevare /
- * byggEpostTekstversjonMerkevare (11_EpostMerkevare.gs, uendret). Høy-saker blir
- * kort per kategori («Om oss» for faste egne navn), irrelevante havner i
- * originalens «Mulig irrelevant». «Andre kilder (N)», «Også i dagens e-post» og
- * «Omtalt tidligere» står i kortets notatlinje (originalens aiNotat). «Ellers i
- * bransjen», «N øvrige treff» og «Ingen nye norskspråklige treff» settes inn før
- * «Mulig irrelevant» (eller før bunnteksten). Oppfølging-saker er ikke med.
+ * Bygger e-posten med originalens byggEpostHtmlMerkevare / byggEpostTekstversjonMerkevare
+ * (11_EpostMerkevare.gs, uendret).
+ * - Apps Script-treff (opts.asTreff, fra fellesløpet) vises som i originalen, også under
+ *   «Mulig irrelevant». Har saken Opoint-medlemmer, legges «Andre kilder (N)» til.
+ * - Opoint: bare høy som kort («Om oss» for faste egne navn); middels i «Ellers i bransjen»;
+ *   lav og irrelevante telles (A1). Oppfølging og språk-ekskluderte er ikke med.
+ * - A5: IMO-vinkelgrupper med høy blir ett kort hver, med lenker «Kilde (dato)».
+ * - A3: headerlinjen «Apps Script: … · Opoint: …» erstatter originalens kildelinje.
+ * - opts.visOpprinnelse: «[AS]», «[OP]» eller «[AS+OP]» etter kildenavnet.
+ * Returnerer {html, tekst, antallHoy, antallLav, antallIrrelevantOp, kort: [...]}.
  */
-function opoint_kj_byggEpost(saker, sm, vindu, fmtSek, harLogo, st, resultater) {
-  var treffPerKategori = {}, antHoy = 0, lav = 0;
+function opoint_kj_byggEpost(saker, sm, vindu, fmtSek, harLogo, st, resultater, opts) {
+  var o = opts || {};
+  var treffPerKategori = {}, antHoy = 0, lav = 0, irrOp = 0, kort = [], plass = {}, plassNr = 0;
+  var merk = function (navn, opph) { return o.visOpprinnelse ? navn + ' [' + opph + ']' : navn; };
+  var leggTil = function (kat, t, info) { (treffPerKategori[kat] = treffPerKategori[kat] || []).push(t); info.kategori = kat; kort.push(info); };
+  // Apps Script-treff (fellesløpet)
+  (o.asTreff || []).forEach(function (x) {
+    var t = x.treff, sak = x.sak;
+    var notat = [];
+    if (t.aiNotat) notat.push(t.aiNotat);
+    var andre = opoint_kj_andreKilderTekst(sak);
+    if (andre) notat.push(andre);
+    var opph = sak && sak.harOp ? 'AS+OP' : 'AS';
+    var kat = t.aiNevnerOss ? 'Om oss' : (x.kategori || 'Ukategorisert');
+    leggTil(kat, Object.assign({}, t, { kilde: merk(t.kilde, opph), aiNotat: notat.join(' · ') }),
+      { opphav: opph, tittel: t.tittel, url: t.lenke, prioritet: t.aiRelevant === false ? 'irrelevant' : 'AS', sak: sak ? sak.id : '' });
+  });
+  // Opoint
+  var imoKort = {};
   saker.forEach(function (sak) {
     var r = sak.kiResultat || {};
-    if (sak.sprakEkskludert || sak.oppfolging) return;
-    if (r.relevant === true && r.prioritet === 'lav') { lav++; return; }
-    if (r.relevant === true && r.prioritet !== 'høy') return;      // middels → sammendrag
-    if (r.relevant !== true && r.relevant !== false) return;       // ikke vurdert / tvil
-    var k = sak.representant, andre = sak.andreKilderListe || [];
+    if (sak.asTreff || sak.sprakEkskludert || sak.oppfolging) return;
+    if (r.relevant === false) { irrOp++; return; }                 // A1: bare telles
+    if (r.relevant !== true) return;                                 // ikke vurdert / tvil
+    if (sak.imoGruppe) {
+      var g = sak.imoGruppe;
+      if (g.prioritet !== 'høy' || imoKort[g.id]) return;            // middels-grupper går til sammendraget
+      imoKort[g.id] = true; antHoy++;
+      var nokkel = '§§LENKER' + (++plassNr) + '§§';
+      plass[nokkel] = g.saker.map(function (s) {
+        var dd = opoint_kj_visDoc(s);
+        return { navn: opoint_kj_kildeNavn(s.representant), url: opoint_t3_artikkelUrl(dd), dato: typeof dd.unix_timestamp === 'number' ? fmtSek(dd.unix_timestamp).slice(0, 10) : '' };
+      });
+      var rep0 = g.saker[0];
+      leggTil('Politikk og regulering', {
+        tittel: g.overskrift, lenke: opoint_t3_artikkelUrl(opoint_kj_visDoc(rep0)),
+        ingress: g.oppsummering + (g.aktorer.length ? ' Aktører: ' + g.aktorer.join(', ') + '.' : ''),
+        kilde: merk('IMO NZF – ' + g.saker.length + ' saker', 'OP'), matchendeOrd: ['IMO Net-Zero Framework'],
+        aiRelevant: true, aiNevnerOss: false, aiNotat: nokkel, aiIrrelevantGrunn: '', aiSammendrag: '' },
+        { opphav: 'OP', tittel: g.overskrift, url: '', prioritet: 'høy', sak: g.saker.map(function (s) { return s.id; }).join(', '), imo: g.id });
+      return;
+    }
+    if (r.prioritet === 'lav') { lav++; return; }
+    if (r.prioritet !== 'høy') return;                              // middels → sammendrag
+    antHoy++;
+    var k = sak.representant, dv = opoint_kj_visDoc(sak);
     var notat = [];
     if (r.notat) notat.push(r.notat);
-    if (andre.length) notat.push('Andre kilder (' + andre.length + '): ' + andre.slice(0, 5).map(function (x) { return x.domene; }).join(', ') +
-      (andre.length > 5 ? ' +' + (andre.length - 5) : ''));
+    var andre = opoint_kj_andreKilderTekst(sak);
+    if (andre) notat.push(andre);
     if (sak.iDagensEpost) notat.push('Også i dagens e-post');
     if (sak.omtaltTidligere) notat.push('Omtalt tidligere');
-    var kat = r.relevant ? (sak.fastRelevant ? 'Om oss' : (r.kategori || 'Annet')) : (r.kategori || 'Annet');
-    if (r.relevant) antHoy++;
-    (treffPerKategori[kat] = treffPerKategori[kat] || []).push({
-      tittel: opointTekstFelt(k.doc.header).replace(/\s+/g, ' ').trim(), lenke: opoint_t3_artikkelUrl(k.doc),
-      ingress: opoint_kj_visSakIngress(sak), kilde: opoint_kj_kildeNavn(k), matchendeOrd: opoint_kj_sokeordFor(sak),
-      aiRelevant: r.relevant, aiKategori: r.kategori, aiNevnerOss: !!r.nevnerOss, aiNotat: notat.join(' · '),
-      aiIrrelevantGrunn: r.irrelevantGrunn || '', aiSammendrag: '' });
+    leggTil(sak.fastRelevant ? 'Om oss' : (r.kategori || 'Annet'), {
+      tittel: opointTekstFelt(dv.header).replace(/\s+/g, ' ').trim(), lenke: opoint_t3_artikkelUrl(dv),
+      ingress: opoint_kj_visSakIngress(sak), kilde: merk(opoint_kj_kildeNavn(k), 'OP'), matchendeOrd: opoint_kj_sokeordFor(sak),
+      aiRelevant: true, aiKategori: r.kategori, aiNevnerOss: !!r.nevnerOss, aiNotat: notat.join(' · '),
+      aiIrrelevantGrunn: '', aiSammendrag: '' },
+      { opphav: 'OP', tittel: opointTekstFelt(dv.header), url: opoint_t3_artikkelUrl(dv), prioritet: 'høy', sak: sak.id });
   });
-  var res = resultater || [];
-  var ok = res.filter(function (x) { return !x.feil; }).length, feilet = res.filter(function (x) { return x.feil; }).map(function (x) { return x.navn; });
   var aiStat = { stoppetTidlig: false, stoppArsak: '', feil: [] };
-  var html = byggEpostHtmlMerkevare(treffPerKategori, ok, res.length, feilet.length, feilet, aiStat, !!harLogo);
-  var tekst = byggEpostTekstversjonMerkevare(treffPerKategori, ok, res.length, feilet.length, feilet, aiStat);
+  var html = byggEpostHtmlMerkevare(treffPerKategori, 0, 0, 0, [], aiStat, !!harLogo);
+  var tekst = byggEpostTekstversjonMerkevare(treffPerKategori, 0, 0, 0, [], aiStat);
+  // A3: erstatt originalens kildelinje
+  var res = resultater || [];
+  var linje = (o.headerAs || 'Apps Script: ikke kjørt') + ' · ' + (o.headerOp ||
+    ('Opoint: OK (' + res.length + ' spørringer, ' + (st && st.dokumenter !== undefined ? st.dokumenter : '?') + ' dokumenter, ' +
+      (st && st.grupper !== undefined ? st.grupper : '?') + ' grupper)'));
+  html = html.replace('0 av 0 kilder hentet OK.', escapeHtml(linje));
+  tekst = tekst.replace('0 av 0 kilder hentet OK.', linje);
+  // A5: lenkelister for IMO-kortene
+  Object.keys(plass).forEach(function (n) {
+    var l = plass[n];
+    html = html.split(escapeHtml(n)).join(l.map(function (x) {
+      return '<a href="' + escapeAttributt(x.url) + '" style="color:' + MC_INNOVATION_BLUE + ';text-decoration:none;">' + escapeHtml(x.navn) + (x.dato ? ' (' + escapeHtml(x.dato) + ')' : '') + '</a>';
+    }).join(' · '));
+    tekst = tekst.split(n).join(l.map(function (x) { return x.navn + (x.dato ? ' (' + x.dato + ')' : '') + ' ' + x.url; }).join('\n'));
+  });
   // Ekstra seksjoner, i originalens stil
   var font = 'font-family:' + MC_FONT_STACK + ';';
   var blokk = '', tekstEkstra = [];
@@ -1963,16 +2202,19 @@ function opoint_kj_byggEpost(saker, sm, vindu, fmtSek, harLogo, st, resultater) 
       '<tr><td bgcolor="' + MC_BAKGRUNN_KORT + '" style="background-color:' + MC_BAKGRUNN_KORT + ';padding:8px 32px 20px 32px;' + font +
       'font-size:16px;line-height:22px;color:' + MC_DEEP_BLUE_700 + ';">' +
       sm.setninger.map(function (x) {
-        return escapeHtml(x.tekst) + ' (<a href="' + escapeAttributt(x.url) + '" style="color:' + MC_INNOVATION_BLUE +
-          ';text-decoration:none;">' + escapeHtml(x.kilde || 'kilde') + '</a>)';
+        var tx = String(x.tekst).replace(/[.!?…]+\s*$/, '');
+        return escapeHtml(tx) + ' (<a href="' + escapeAttributt(x.url) + '" style="color:' + MC_INNOVATION_BLUE +
+          ';text-decoration:none;">' + escapeHtml(x.kilde || 'kilde') + '</a>).';
       }).join(' ') +
       '</td></tr>';
     tekstEkstra.push('', '== Ellers i bransjen ==');
-    sm.setninger.forEach(function (x) { tekstEkstra.push(x.tekst + ' (' + (x.kilde || 'kilde') + ': ' + x.url + ')'); });
+    sm.setninger.forEach(function (x) { tekstEkstra.push(String(x.tekst).replace(/[.!?…]+\s*$/, '') + ' (' + (x.kilde || 'kilde') + ': ' + x.url + ').'); });
   }
   var smaa = [];
   if (lav > 0) smaa.push(lav + ' øvrige treff i arkfanen.');
+  if (irrOp > 0) smaa.push(irrOp + ' vurdert som irrelevante, se arkfanen.');
   if (st && st.ingenNorske) smaa.push('Ingen nye norskspråklige treff.');
+  if (o.ekstraLinjer) o.ekstraLinjer.forEach(function (x) { smaa.push(x); });
   if (smaa.length) {
     blokk += '<tr><td bgcolor="' + MC_BAKGRUNN_KORT + '" style="background-color:' + MC_BAKGRUNN_KORT + ';padding:0 32px 20px 32px;' + font +
       'font-size:13px;line-height:20px;color:' + MC_DEEP_BLUE_500 + ';">' + smaa.map(escapeHtml).join('<br>') + '</td></tr>';
@@ -1981,15 +2223,16 @@ function opoint_kj_byggEpost(saker, sm, vindu, fmtSek, harLogo, st, resultater) 
   }
   var merke = '<tr><td bgcolor="' + MC_IRRELEVANT_BAKGRUNN + '"';
   var i = html.indexOf(merke);
-  if (i < 0) { var f = html.indexOf('border-top:1px solid ' + MC_DEEP_BLUE_200); i = f >= 0 ? html.lastIndexOf('<tr>', f) : -1; }
+  if (i < 0) { var fi = html.indexOf('border-top:1px solid ' + MC_DEEP_BLUE_200); i = fi >= 0 ? html.lastIndexOf('<tr>', fi) : -1; }
   html = i >= 0 ? html.slice(0, i) + blokk + html.slice(i) : html;
-  return { html: html, tekst: tekst + (tekstEkstra.length ? '\n' + tekstEkstra.join('\n') : ''), antallHoy: antHoy, antallLav: lav };
+  return { html: html, tekst: tekst + (tekstEkstra.length ? '\n' + tekstEkstra.join('\n') : ''), antallHoy: antHoy, antallLav: lav,
+    antallIrrelevantOp: irrOp, kort: kort };
 }
 
 /** Lagrer HTML i Drive og sender til TEST_EPOST (Script Property). Returnerer {driveUrl, melding}. */
-function opoint_kj_lagreOgSend(epost, vindu, fmtSek) {
+function opoint_kj_lagreOgSend(epost, vindu, fmtSek, emne, filprefiks) {
   var ut = { driveUrl: '', melding: '' };
-  var navn = 'Opoint-test ' + fmtSek(vindu.oldest).replace(/[: ]/g, '-') + ' til ' + fmtSek(vindu.newest).replace(/[: ]/g, '-') + '.html';
+  var navn = (filprefiks || 'Opoint-test') + ' ' + fmtSek(vindu.oldest).replace(/[: ]/g, '-') + ' til ' + fmtSek(vindu.newest).replace(/[: ]/g, '-') + '.html';
   try {
     ut.driveUrl = DriveApp.createFile(navn, epost.html, MimeType.HTML).getUrl();
   } catch (e) {
@@ -2003,7 +2246,7 @@ function opoint_kj_lagreOgSend(epost, vindu, fmtSek) {
   var html = logo.blob ? epost.html : epost.html.replace(/<img src="cid:logo"[^>]*>/, '<div style="font-size:18px;font-weight:bold;color:' + MC_DEEP_BLUE + ';">Maritime CleanTech</div>');
   var options = { htmlBody: html };
   if (logo.blob) options.inlineImages = { logo: logo.blob };
-  GmailApp.sendEmail(String(til).trim(), '[Opoint-test] Medieovervåking ' + fmtSek(vindu.oldest) + ' – ' + fmtSek(vindu.newest), epost.tekst, options);
+  GmailApp.sendEmail(String(til).trim(), emne || ('[Opoint-test] Medieovervåking ' + fmtSek(vindu.oldest) + ' – ' + fmtSek(vindu.newest)), epost.tekst, options);
   ut.melding += 'Sendt til TEST_EPOST.';
   return ut;
 }
