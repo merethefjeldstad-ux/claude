@@ -42,6 +42,9 @@ var OPOINT_KJOR_START = '2026-11-17 07:30';
 var OPOINT_KJOR_SLUTT = '2026-11-18 07:30';
 
 var OPOINT_KJOR_SEND_EPOST = false;
+// Steg 2/3 kjøres uten KI. Settes til true først i steg 4–5.
+var OPOINT_KJOR_KI_AKTIV = false;
+var OPOINT_KJOR_FANE_KILDEPRIORITET = 'Kildeprioritet';
 var OPOINT_KJOR_MAX_HTTP = 80;
 var OPOINT_KJOR_MAX_VURDERT = 200;
 var OPOINT_KJOR_EKSKLUDER_DOMENER = ['headtopics.com'];
@@ -80,15 +83,18 @@ var OPOINT_KJOR_A_EKSTRA_NAVN = [];
 var OPOINT_KJOR_A_KUN_EKSAKT = ['GASS'];
 
 // Strøm B: engelske tema, mønsteret fra spørring a) i opoint_test2().
-// Steg 2a: felles kontekst for alle B-spørringer. Kan overstyres per spørring
-// med feltet "kontekst" i OPOINT_KJOR_STROM_B_TABELL.
-// Avvik fra bestillingen, fordi dokumentasjonen (search-syntax) ikke dekker
-// det: "AND NOT" er skrevet som ANDNOT (dokumentert operator), og "e-bike*"
-// (jokertegn inni frase) er erstattet med "e-bike" OR "e-bikes".
-var OPOINT_B_KONTEKST = '(vessel* OR ferry OR ferries OR maritime OR marine OR shipping OR shipowner* OR shipyard* OR ' +
-  'shipbuilding OR bunkering OR newbuild* OR seafarer* OR tanker*) ANDNOT (smartphone* OR phone* OR laptop* OR ' +
-  'gadget* OR "e-bike" OR "e-bikes" OR ebike* OR "free shipping" OR "ships with")';
-// gammelKontekst = konteksten før steg 2 (brukes bare i opoint_kj_testSteg2).
+// Steg 2b (rettet): GAMMEL positiv kontekst (nå med vessel*) + ANDNOT-liste.
+// Den brede positive konteksten fra forrige forslag er droppet.
+// "AND NOT" skrives ANDNOT (dokumentert operator i search-syntax).
+var OPOINT_B_POSITIV = '(vessel* OR ship OR shipping)';
+var OPOINT_B_ANDNOT_ORD = ['smartphone*', 'phone*', 'laptop*', 'gadget*', '"e-bike"', '"e-bikes"', 'ebike*',
+  '"free shipping"', '"ships with"'];
+// Ord som skal tas UT av ANDNOT-listen (fylles inn etter opoint_kj_testSteg2B,
+// som viser hvilke ord som fjerner de tre relevante sakene).
+var OPOINT_B_ANDNOT_FJERN = [];
+// gammelKontekst = konteksten før steg 2 (brukes bare til før/etter-sammenligning).
+// Per rad kan "positiv" (erstatter OPOINT_B_POSITIV) eller "kontekst" (erstatter
+// hele konteksten, også ANDNOT) overstyre.
 var OPOINT_KJOR_STROM_B_TABELL = [
   { navn: 'B ammonia', term: 'header:ammonia', gammelKontekst: '(vessel OR ship OR shipping)' },
   { navn: 'B methanol', term: 'header:methanol', gammelKontekst: '(vessel OR ship OR shipping)' },
@@ -96,7 +102,8 @@ var OPOINT_KJOR_STROM_B_TABELL = [
   { navn: 'B shore power', term: 'header:"shore power"', gammelKontekst: '(vessel OR ship OR shipping)' },
   { navn: 'B wind-assisted', term: 'header:"wind-assisted"', gammelKontekst: '(vessel OR ship OR shipping)' },
   { navn: 'B carbon capture', term: 'header:"carbon capture"', gammelKontekst: '(vessel OR ship OR shipping)' },
-  { navn: 'B battery/electric', term: '(header:battery OR header:electric)', gammelKontekst: '(ferry OR vessel OR ship)' },
+  { navn: 'B battery/electric', term: '(header:battery OR header:electric)', gammelKontekst: '(ferry OR vessel OR ship)',
+    positiv: '(ferry OR vessel* OR ship)' },
   { navn: 'B net-zero framework', term: 'header:"net-zero framework"', gammelKontekst: '(vessel OR ship OR shipping)' },
   { navn: 'B FuelEU', term: 'header:FuelEU', gammelKontekst: '(vessel OR ship OR shipping)' },
   { navn: 'B EU ETS', term: 'header:"EU ETS"', gammelKontekst: '(vessel OR ship OR shipping)' }
@@ -136,13 +143,29 @@ var OPOINT_KJOR_D_TEMAORD = ['hydrogen*', 'ammoniakk*', 'batteri*', 'elektrisk*'
 var OPOINT_KJOR_D2_KONTEKST = ['skip*', 'fartøy*', 'ferge*', 'ferje*', 'rederi*', 'havn*', 'maritim*'];
 var OPOINT_KJOR_D_MAKS_ORD = 15;
 // Rettelse c: faste D-grupper som overstyrer domenetilordningen.
-var OPOINT_KJOR_D_FAST_GRUPPE = { '64': 'D1' }; // Skipsrevyen
+// Steg 2: id-ene er bekreftet, så alle fem har fast gruppe (uavhengig av
+// hvilket vertsnavn forrige kjøring viste, f.eks. batomtaler.kystmagasinet.no).
+var OPOINT_KJOR_D_FAST_GRUPPE = { '64': 'D1', '19526': 'D1', '18139': 'D1', '338722': 'D2', '141703': 'D2' };
+
+// Steg 2c: skipsregistersider ekskluderes (markeres, slettes ikke, ingen KI).
+var OPOINT_KJOR_EKSKL_VERTER = ['batomtaler.kystmagasinet.no'];
+var OPOINT_KJOR_EKSKL_STI = [{ vert: 'maritimt.com', sti: /-\d{4}-\d{2}$/, beskrivelse: 'maritimt.com med URL som slutter på -ÅÅÅÅ-MM' }];
 
 // Rettelse a: unntak per Tier 2-ord (skrivemåte som i "Søkeord"). Bygges som
 // "ORD AND (kontekst) ANDNOT (unntak)". ANDNOT er operatoren som står i
 // search-syntax ("You can add AND, OR and ANDNOT operators"); "AND NOT" er
 // ikke dokumentert.
-var OPOINT_KJOR_T2_UNNTAK = { 'GASS': ['StealthGas', 'Stealth Gas', 'NASDAQ'] }; // ord per spørring (temaord + kontekst), site:-filteret ikke medregnet
+var OPOINT_KJOR_T2_UNNTAK = { 'GASS': ['StealthGas', 'Stealth Gas', 'NASDAQ'] };
+
+// Steg 2d: hele Opoint-spørringen per Tier 2-ord, i stedet for konteksten fra
+// "Søkeord" (fanen endres ikke – den brukes også av Apps Script). Ord som ikke
+// står her (FLAGSHIPS, TrAM, zero-emission zone, GASS) bygges fra "Søkeord" som før.
+var OPOINT_T2_OVERSTYRING = {
+  'Apollo': 'Apollo AND (Eidesvik OR "Viking Energy" OR "ammonia-powered" OR ammoniakkdrevet* OR ' +
+    '((Equinor OR Wartsila OR Wärtsilä) AND (ammonia OR ammoniakk)) OR "Maritime CleanTech")',
+  'AWESOME': 'AWESOME AND ("wind assisted" OR "wind-assisted" OR vindassistert OR "vind-assistert" OR ' +
+    '"Kongsberg maritime" OR Odfjell OR "Maritime CleanTech")'
+}; // ord per spørring (temaord + kontekst), site:-filteret ikke medregnet
 
 // =====================================================================
 // Konstanter – opoint_diagnose() / opoint_diagnose_dekning()
@@ -574,6 +597,14 @@ function opoint_kjor() {
   var kandidater = opoint_kj_dedup(resultater, OPOINT_KJOR_EKSKLUDER_DOMENER);
   opoint_kj_saksgrupper(kandidater, OPOINT_KJOR_SAKSGRENSE);
 
+  // 2b) Steg 2f: nye domener nederst i "Kildeprioritet" (eksisterende rader endres ikke)
+  try {
+    oppsett.merknader.push(opoint_kj_leggTilNyeDomener(ss, kandidater));
+  } catch (e) {
+    oppsett.merknader.push('Kildeprioritet: feil, ingenting lagt til: ' + e.message);
+  }
+  Logger.log(oppsett.merknader[oppsett.merknader.length - 1]);
+
   // 3) Apps Script-status (kun lesing)
   var apps = opoint_kj_lesAppsScript(ss, vindu, d);
   kandidater.forEach(function (k) { opoint_kj_settAppsStatus(k, apps); });
@@ -583,7 +614,11 @@ function opoint_kjor() {
   opoint_kj_skrivKjoring(ss, kandidater, resultater, vindu, klient, ki, apps, d, apiKey, oppsett);
 
   // 5) KI-vurdering
-  ki = opoint_kj_kiVurder(kandidater, startMs);
+  if (OPOINT_KJOR_KI_AKTIV) {
+    ki = opoint_kj_kiVurder(kandidater, startMs);
+  } else {
+    ki.melding = 'KI ikke kjørt (OPOINT_KJOR_KI_AKTIV = false).';
+  }
   opoint_kj_skrivKjoring(ss, kandidater, resultater, vindu, klient, ki, apps, d, apiKey, oppsett);
   Logger.log('opoint_kjor: ' + klient.antall() + ' HTTP-kall, ' + kandidater.length + ' kandidater, KI: ' + ki.melding);
 
@@ -664,6 +699,13 @@ function opoint_kj_byggTier2(sokeordListe) {
     var ord = String(rad.sokeord || '').trim();
     if (!ord) return;
     ut.ord.push(ord);
+    var overstyrt = opoint_kj_finnOverstyring(ord);
+    if (overstyrt) {
+      ut.sporringer.push({ strom: 'A', navn: 'A T2 ' + ord, tier2: true, overstyrt: true, utenUnntak: overstyrt,
+        searchterm: overstyrt });
+      ut.merknader.push('Tier 2 "' + ord + '": spørringen er overstyrt av OPOINT_T2_OVERSTYRING (kontekst fra "Søkeord" brukes ikke).');
+      return;
+    }
     var kontekst = (rad.kontekstord || []).map(function (k) { return String(k).trim(); }).filter(function (k) { return k; });
     if (kontekst.length === 0) {
       ut.merknader.push('Tier 2 "' + ord + '" har ingen kontekstord – hoppet over.');
@@ -686,6 +728,15 @@ function opoint_kj_byggTier2(sokeordListe) {
       searchterm: grunn + (unntak.length ? ' ANDNOT (' + unntak.map(opoint_kj_formaterLedd).join(' OR ') + ')' : '') });
   });
   return ut;
+}
+
+/** Overstyring for et Tier 2-ord (eksakt navn først, så uten hensyn til store/små bokstaver). */
+function opoint_kj_finnOverstyring(ord) {
+  if (OPOINT_T2_OVERSTYRING[ord]) return OPOINT_T2_OVERSTYRING[ord];
+  var lav = ord.toLowerCase();
+  var nokler = Object.keys(OPOINT_T2_OVERSTYRING);
+  for (var i = 0; i < nokler.length; i++) if (nokler[i].toLowerCase() === lav) return OPOINT_T2_OVERSTYRING[nokler[i]];
+  return '';
 }
 
 /**
@@ -735,10 +786,24 @@ function opoint_kj_tilordneD(siteDomener) {
   });
 }
 
+/** ANDNOT-listen for B uten ordene i fjern (og OPOINT_B_ANDNOT_FJERN). */
+function opoint_kj_bAndnot(fjern) {
+  var bort = (fjern || []).concat(OPOINT_B_ANDNOT_FJERN);
+  var ord = OPOINT_B_ANDNOT_ORD.filter(function (o) { return bort.indexOf(o) < 0; });
+  return ord.length ? '(' + ord.join(' OR ') + ')' : '';
+}
+
+/** Strøm B-konteksten for én tabellrad. */
+function opoint_kj_bKontekst(rad, fjern) {
+  if (rad.kontekst) return rad.kontekst;
+  var neg = opoint_kj_bAndnot(fjern);
+  return (rad.positiv || OPOINT_B_POSITIV) + (neg ? ' ANDNOT ' + neg : '');
+}
+
 /** Strøm B fra tabellen. gammel = true gir konteksten fra før steg 2 (kun til sammenligning). */
-function opoint_kj_byggStromB(gammel) {
+function opoint_kj_byggStromB(gammel, fjern) {
   return OPOINT_KJOR_STROM_B_TABELL.map(function (rad) {
-    var kontekst = gammel ? rad.gammelKontekst : (rad.kontekst || OPOINT_B_KONTEKST);
+    var kontekst = gammel ? rad.gammelKontekst : opoint_kj_bKontekst(rad, fjern);
     return { strom: 'B', navn: rad.navn, searchterm: rad.term + ' AND ' + kontekst };
   });
 }
@@ -836,6 +901,31 @@ function opoint_kj_verifiserSites(res, ider) {
   }
 }
 
+/** Vert og sti fra en URL (vert uten www., sti uten query/fragment og avsluttende /). */
+function opoint_kj_vertOgSti(u) {
+  var s = String(u || '').trim().toLowerCase().replace(/^[a-z][a-z0-9+.-]*:\/\//, '');
+  s = s.split('#')[0].split('?')[0];
+  var i = s.indexOf('/');
+  var vert = (i < 0 ? s : s.slice(0, i)).replace(/:\d+$/, '').replace(/^www\./, '');
+  var sti = (i < 0 ? '' : s.slice(i)).replace(/\/+$/, '');
+  return { vert: vert, sti: sti };
+}
+
+/** Steg 2c: grunn til ekskludering som skipsregisterside, eller ''. Ser på orig_url og url. */
+function opoint_kj_skipsregisterGrunn(doc) {
+  var urler = [doc && doc.orig_url, doc && doc.url].filter(function (u) { return u; });
+  for (var i = 0; i < urler.length; i++) {
+    var vs = opoint_kj_vertOgSti(urler[i]);
+    if (OPOINT_KJOR_EKSKL_VERTER.indexOf(vs.vert) >= 0) return 'Skipsregister: vert ' + vs.vert;
+    for (var j = 0; j < OPOINT_KJOR_EKSKL_STI.length; j++) {
+      var m = OPOINT_KJOR_EKSKL_STI[j];
+      var vertOk = vs.vert === m.vert || vs.vert.slice(-(m.vert.length + 1)) === '.' + m.vert;
+      if (vertOk && m.sti.test(vs.sti)) return 'Skipsregister: ' + m.beskrivelse;
+    }
+  }
+  return '';
+}
+
 /**
  * Dedupliserer på tvers av spørringer og batcher: samme equalgroup ELLER
  * samme normaliserte URL → samme kandidat. Alle strømmer/spørringer som
@@ -856,8 +946,11 @@ function opoint_kj_dedup(resultater, ekskluderDomener) {
       } else {
         finnes = kandidater.length;
         var domene = opoint_kj_domene(doc);
+        var regGrunn = opoint_kj_skipsregisterGrunn(doc);
+        var domEkskl = opoint_kj_erEkskludert(domene, ekskluderDomener);
         kandidater.push({ doc: doc, normUrl: norm, domene: domene, strommer: [res.strom], sporringer: [res.navn],
-          antallTreff: 1, ekskludert: opoint_kj_erEkskludert(domene, ekskluderDomener),
+          antallTreff: 1, ekskludert: domEkskl || !!regGrunn,
+          ekskluderGrunn: domEkskl ? 'Ekskludert domene' : regGrunn,
           sak: '', antallKilderISak: 0, appsStatus: '', appsArsak: '', treff: null });
       }
       if (eg) egKart[eg] = finnes;
@@ -968,6 +1061,50 @@ function opoint_kj_settAppsStatus(k, apps) {
   }
   k.appsStatus = 'ikke sett av Apps Script';
   k.appsArsak = '';
+}
+
+/** Domene normalisert til vert: små bokstaver, uten protokoll, www., port og sti. */
+function opoint_kj_normDomene(s) {
+  return opoint_kj_vertOgSti(String(s || '').trim()).vert;
+}
+
+/**
+ * Steg 2f: domener (fra kandidatene) som ikke finnes i "Kildeprioritet" legges
+ * nederst med tomt nivå og merknaden "Ny, ikke vurdert". Eksisterende rader
+ * endres aldri. Finnes ikke fanen, gjøres ingenting.
+ */
+function opoint_kj_leggTilNyeDomener(ss, kandidater) {
+  var ark = ss.getSheetByName(OPOINT_KJOR_FANE_KILDEPRIORITET);
+  if (!ark) return 'Kildeprioritet: fanen finnes ikke – ingen domener lagt til.';
+  var bredde = Math.max(ark.getLastColumn(), 1);
+  var data = ark.getRange(1, 1, Math.max(ark.getLastRow(), 1), bredde).getValues();
+  var plan = opoint_kj_planNyeDomener(data, kandidater);
+  if (plan.feil) return 'Kildeprioritet: ' + plan.feil;
+  if (plan.rader.length) ark.getRange(ark.getLastRow() + 1, 1, plan.rader.length, bredde).setValues(plan.rader);
+  return 'Kildeprioritet: ' + plan.rader.length + ' nye domener lagt til' +
+    (plan.rader.length ? ' (' + plan.nye.slice(0, 20).join(', ') + (plan.nye.length > 20 ? ' …' : '') + ')' : '') + '.';
+}
+
+/** Ren funksjon: hvilke rader som skal legges til. */
+function opoint_kj_planNyeDomener(data, kandidater) {
+  var hode = (data[0] || []).map(function (h) { return String(h).trim().toLowerCase(); });
+  var finn = function (start) { for (var i = 0; i < hode.length; i++) if (hode[i].indexOf(start) === 0) return i; return -1; };
+  var iDom = finn('domene'), iMerk = finn('merknad');
+  if (iDom < 0) return { feil: 'fant ikke kolonnen "Domene" i rad 1 – ingen domener lagt til.', rader: [], nye: [] };
+  var finnes = {};
+  for (var r = 1; r < data.length; r++) { var dm = opoint_kj_normDomene(data[r][iDom]); if (dm) finnes[dm] = true; }
+  var nye = [];
+  kandidater.forEach(function (k) {
+    var dm = opoint_kj_normDomene(k.domene);
+    if (dm && !finnes[dm]) { finnes[dm] = true; nye.push(dm); }
+  });
+  var rader = nye.map(function (dm) {
+    var rad = hode.map(function () { return ''; });
+    rad[iDom] = dm;
+    if (iMerk >= 0) rad[iMerk] = 'Ny, ikke vurdert';
+    return rad;
+  });
+  return { feil: '', rader: rader, nye: nye };
 }
 
 /** Prioritert liste for KI: ikke ekskluderte, sortert på beste strøm (A, B, C, D). */
@@ -1083,7 +1220,8 @@ function opoint_kj_byggRaderKjoring(kandidater, vindu, klient, ki, apps, d) {
       doc.countrycode || '', doc.id_site !== undefined ? doc.id_site : '', opoint_firstSource(doc.first_source),
       doc.equalgroup !== undefined && doc.equalgroup !== null ? doc.equalgroup : '', k.sak, k.antallKilderISak,
       opoint_kj_kiRelevant(k), t.aiKategori || '', t.aiNotat || t.aiIrrelevantGrunn || '', k.appsStatus, '',
-      k.appsArsak, k.ekskludert ? 'Ja' : '', k.sporringer.join(' | '), k.domene, t.aiSammendrag || '']);
+      k.appsArsak, k.ekskludert ? 'Ja' + (k.ekskluderGrunn ? ' (' + k.ekskluderGrunn + ')' : '') : '',
+      k.sporringer.join(' | '), k.domene, t.aiSammendrag || '']);
   });
   return rader;
 }
@@ -1394,8 +1532,8 @@ function opoint_kj_forrigeKiFraRader(data) {
   return ut;
 }
 
-function opoint_kj_kjorTestSteg2(klient, vindu, forrigeKi, tidUte) {
-  var gamle = opoint_kj_byggStromB(true), nye = opoint_kj_byggStromB(false);
+function opoint_kj_kjorTestSteg2(klient, vindu, forrigeKi, tidUte, fjern) {
+  var gamle = opoint_kj_byggStromB(true), nye = opoint_kj_byggStromB(false, fjern);
   var nokkel = function (doc) { return doc.id_site + '_' + doc.id_article; };
   return gamle.map(function (g, i) {
     var rg = opoint_kj_hentSporring(klient, g, vindu, OPOINT_KJOR_REQUESTED, OPOINT_KJOR_MAKS_BATCHER, true, tidUte);
@@ -1420,7 +1558,8 @@ function opoint_kj_byggRaderTestSteg2(s, vindu, klient, forrigeKi, d) {
   var rader = [['Test steg 2 (strøm B)', 'Vindu', d.fmtSek(vindu.oldest) + ' – ' + d.fmtSek(vindu.newest), 'HTTP-kall', klient.antall(),
     'Kalltak nådd?', klient.takNadd() ? 'Ja' : 'Nei', 'KI-kall', 0, 'Forsvunnet totalt', borteTotalt,
     'hvorav KI «ja» i forrige kjøring', borteJa, 'Rader med KI-vurdering lest fra forrige kjøring', forrigeKi.antall],
-    ['Ny kontekst', OPOINT_B_KONTEKST], [''],
+    ['Ny kontekst (standard)', opoint_kj_bKontekst({}, s.fjern || []), 'ANDNOT-ord tatt ut',
+      (s.fjern || []).concat(OPOINT_B_ANDNOT_FJERN).join(', ') || '(ingen)'], [''],
     ['Spørring', 'Dokumenter før', 'Dokumenter etter', 'Forsvunnet', 'Nye (bare etter)', 'Context tom før/etter',
       'Feil før', 'Feil etter', 'Søketekst før', 'Søketekst etter']];
   s.forEach(function (x) {
@@ -1544,6 +1683,235 @@ function opoint_kj_byggRaderTestD(kontroll, tilordning, kjoringer, vinduer, klie
         typeof doc.unix_timestamp === 'number' ? d.fmtSek(doc.unix_timestamp) : '', opointTekstFelt(doc.header),
         opoint_t3_artikkelUrl(doc)]);
     });
+  });
+  return rader;
+}
+
+// =====================================================================
+// Steg 2a + 2b – hvilke ANDNOT-ord fjerner de tre relevante sakene, og B med
+// gammel positiv kontekst + ANDNOT uten disse ordene. Ingen KI.
+// Fane "Opoint-test steg 2B".
+// =====================================================================
+
+var OPOINT_KJ_T2B_FANE = 'Opoint-test steg 2B';
+var OPOINT_KJ_T2B_MAKS_KALL = 130;
+var OPOINT_KJ_T2B_ARTIKLER = [
+  { tittel: 'Auramarine to supply methanol fuel systems for two German research vessels', domene: 'tradearabia.com' },
+  { tittel: "Norwegian shipping company takes delivery of the world's largest electric vessel built in China", domene: 'scandasia.com' },
+  { tittel: 'Denmark Orders Three 40-Knot Electric Ferries with 165MWh Batteries', domene: 'europesays.com' }
+];
+// Titler som ikke skal være igjen etter filteret (mobiler, hodetelefoner, e-sykler, laptoper).
+var OPOINT_KJ_T2B_UONSKET = ['phone', 'smartphone', 'iphone', 'headphone', 'earbud', 'earphone', 'e-bike', 'ebike', 'laptop'];
+
+function opoint_kj_testSteg2B() {
+  var apiKey = opoint_t3_hentNokkel();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var startMs = Date.now();
+  var d = opoint_t3_datoFunksjoner();
+  var rader = [];
+  try {
+    var parse = function (s) { return Utilities.parseDate(s, 'Europe/Oslo', 'yyyy-MM-dd HH:mm'); };
+    var vindu = opoint_beregnVindu(OPOINT_KJOR_START, OPOINT_KJOR_SLUTT, undefined, startMs, parse);
+    var forrigeKi = opoint_kj_lesForrigeKi(ss, OPOINT_KJOR_FANE);
+    var klient = opoint_t3_lagKlient(apiKey, OPOINT_KJ_T2B_MAKS_KALL);
+    var tidUte = opoint_kj_tidsvakt(startMs, OPOINT_KJOR_TIDSBUDSJETT_MS);
+    var a = opoint_kj_kjorSteg2A(klient, vindu, tidUte);
+    var b = opoint_kj_kjorTestSteg2(klient, vindu, forrigeKi, tidUte, a.skyldige);
+    b.fjern = a.skyldige;
+    rader = opoint_kj_byggRaderSteg2A(a, vindu, klient, d).concat([['']],
+      opoint_kj_byggRaderTestSteg2(b, vindu, klient, forrigeKi, d), [['']], opoint_kj_byggRaderUonsket(b));
+  } catch (e) {
+    rader = [['FEIL', opointMaskerNokkel(String(e && e.message ? e.message : e), apiKey)]];
+  }
+  opoint_t3_skrivFane(ss, OPOINT_KJ_T2B_FANE, rader, apiKey);
+  Logger.log('Skrevet til "' + OPOINT_KJ_T2B_FANE + '".');
+}
+
+/**
+ * Steg 2a: finner hver artikkel med header:-søk på de 4 mest særegne ordene
+ * i tittelen, og kjører deretter "<id-søk> AND (ord)" for hvert ANDNOT-ord.
+ * Treff = ordet finnes i artikkelen (ANDNOT gjelder hele teksten, ikke bare tittelen).
+ */
+function opoint_kj_kjorSteg2A(klient, vindu, tidUte) {
+  var ut = { artikler: [], skyldige: [] };
+  OPOINT_KJ_T2B_ARTIKLER.forEach(function (art) {
+    var r = { tittel: art.tittel, domene: art.domene, idSok: '', funnet: null, iTittel: [], treffOrd: [], ordResultat: [], feil: '' };
+    ut.artikler.push(r);
+    var lav = art.tittel.toLowerCase();
+    OPOINT_B_ANDNOT_ORD.forEach(function (o) {
+      var ren = o.replace(/["*]/g, '').toLowerCase();
+      if (lav.indexOf(ren) >= 0) r.iTittel.push(o);
+    });
+    r.idSok = opoint_t3_saeregneOrd(art.tittel).slice(0, 4).map(function (w) { return 'header:' + w; }).join(' AND ');
+    var base = opoint_kj_hentSporring(klient, { navn: 'id', searchterm: r.idSok }, vindu, 25, 1, true, tidUte);
+    if (base.feil) { r.feil = base.feil; return; }
+    r.funnet = opoint_kj_finnArtikkel(base.dokumenter, art);
+    if (!r.funnet) { r.feil = 'Fant ikke artikkelen med id-søket (' + base.dokumenter.length + ' dokumenter).'; return; }
+    OPOINT_B_ANDNOT_ORD.forEach(function (o) {
+      var t = opoint_kj_hentSporring(klient, { navn: o, searchterm: r.idSok + ' AND (' + o + ')' }, vindu, 25, 1, true, tidUte);
+      var treff = !t.feil && !!opoint_kj_finnArtikkel(t.dokumenter, art);
+      r.ordResultat.push({ ord: o, treff: treff, feil: t.feil });
+      if (treff) {
+        r.treffOrd.push(o);
+        if (ut.skyldige.indexOf(o) < 0) ut.skyldige.push(o);
+      }
+    });
+  });
+  return ut;
+}
+
+/** Finner artikkelen i en dokumentliste: domene + tittellikhet ≥ 80 %, ellers tittellikhet ≥ 90 %. */
+function opoint_kj_finnArtikkel(dokumenter, art) {
+  var best = null, bestL = 0;
+  dokumenter.forEach(function (doc) {
+    var l = opoint_t3_tittelLikhet(art.tittel, opointTekstFelt(doc.header));
+    var domOk = opoint_kj_domene(doc).indexOf(art.domene) >= 0;
+    if ((domOk && l >= 0.8) || l >= 0.9) { if (l > bestL) { bestL = l; best = doc; } }
+  });
+  return best;
+}
+
+function opoint_kj_byggRaderSteg2A(a, vindu, klient, d) {
+  var rader = [['Steg 2a: ANDNOT-ord mot de tre relevante sakene', 'Vindu', d.fmtSek(vindu.oldest) + ' – ' + d.fmtSek(vindu.newest),
+    'HTTP-kall (hele testen)', klient.antall(), 'Kalltak nådd?', klient.takNadd() ? 'Ja' : 'Nei', 'KI-kall', 0],
+    ['Ord som treffer minst én av sakene (tatt ut av ANDNOT i 2b)', a.skyldige.join(', ') || '(ingen)'],
+    ['Artikkel', 'Domene', 'Funnet med id-søk?', 'Id-søk', 'ANDNOT-ord i selve tittelen', 'ANDNOT-ord som treffer artikkelen', 'Feil']];
+  a.artikler.forEach(function (r) {
+    rader.push([r.tittel, r.domene, r.funnet ? 'Ja' : 'Nei', r.idSok, r.iTittel.join(', '), r.treffOrd.join(', ') || (r.funnet ? '(ingen)' : ''), r.feil]);
+  });
+  rader.push(['']);
+  rader.push(['Detalj', 'Artikkel', 'Ord', 'Treffer?', 'Feil']);
+  a.artikler.forEach(function (r) {
+    r.ordResultat.forEach(function (o) { rader.push(['', opointKort(r.tittel, 50), o.ord, o.treff ? 'JA' : 'nei', o.feil]); });
+  });
+  return rader;
+}
+
+/** Uønskede titler (mobil, hodetelefoner, e-sykler …) før og etter for strøm B. */
+function opoint_kj_byggRaderUonsket(b) {
+  var rader = [['Uønskede titler (mobil/hodetelefoner/e-sykkel/laptop)', 'Spørring', 'Før/etter', 'Tittel', 'Domene']];
+  var antFor = 0, antEtter = 0;
+  b.forEach(function (x) {
+    [['før', x.gammel], ['etter', x.ny]].forEach(function (par) {
+      par[1].dokumenter.forEach(function (doc) {
+        var t = opointTekstFelt(doc.header), lav = t.toLowerCase();
+        if (OPOINT_KJ_T2B_UONSKET.some(function (o) { return lav.indexOf(o) >= 0; })) {
+          if (par[0] === 'før') antFor++; else antEtter++;
+          rader.push(['', x.navn, par[0], t, opoint_kj_domene(doc)]);
+        }
+      });
+    });
+  });
+  rader.splice(1, 0, ['Antall', 'før: ' + antFor, 'etter: ' + antEtter, antEtter === 0 ? 'OK' : 'FEIL: uønskede titler igjen']);
+  return rader;
+}
+
+// =====================================================================
+// Steg 2c – skipsregistersider i D, 3.–10. november. Ingen KI. Fane "Opoint-test steg 2C".
+// =====================================================================
+
+var OPOINT_KJ_T2C_FANE = 'Opoint-test steg 2C';
+var OPOINT_KJ_T2C_MAKS_KALL = 25;
+
+function opoint_kj_testSteg2C() {
+  var apiKey = opoint_t3_hentNokkel();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var startMs = Date.now();
+  var d = opoint_t3_datoFunksjoner();
+  var rader;
+  try {
+    var parse = function (s) { return Utilities.parseDate(s, 'Europe/Oslo', 'yyyy-MM-dd HH:mm'); };
+    var vindu = opoint_beregnVindu(OPOINT_KJ_TESTD_HIST_START, OPOINT_KJ_TESTD_HIST_SLUTT, undefined, startMs, parse);
+    var klient = opoint_t3_lagKlient(apiKey, OPOINT_KJ_T2C_MAKS_KALL);
+    var tidUte = opoint_kj_tidsvakt(startMs, OPOINT_KJOR_TIDSBUDSJETT_MS);
+    var res = opoint_kj_byggStromD(opoint_kj_tilordneD({})).map(function (sp) {
+      var r = opoint_kj_hentSporring(klient, sp, vindu, OPOINT_KJOR_REQUESTED, OPOINT_KJOR_MAKS_BATCHER, true, tidUte);
+      if (!r.feil) opoint_kj_verifiserSites(r, sp.verifiserSites);
+      return r;
+    });
+    rader = opoint_kj_byggRaderSteg2C(res, vindu, klient, d);
+  } catch (e) {
+    rader = [['FEIL', opointMaskerNokkel(String(e && e.message ? e.message : e), apiKey)]];
+  }
+  opoint_t3_skrivFane(ss, OPOINT_KJ_T2C_FANE, rader, apiKey);
+  Logger.log('Skrevet til "' + OPOINT_KJ_T2C_FANE + '".');
+}
+
+function opoint_kj_byggRaderSteg2C(res, vindu, klient, d) {
+  var sett = {}, alle = [];
+  res.forEach(function (r) {
+    r.dokumenter.forEach(function (doc) {
+      var n = doc.id_site + '_' + doc.id_article;
+      if (sett[n]) return;
+      sett[n] = true;
+      alle.push({ doc: doc, sporring: r.navn, grunn: opoint_kj_skipsregisterGrunn(doc) });
+    });
+  });
+  var bort = alle.filter(function (x) { return x.grunn; }).length;
+  var rader = [['Steg 2c: skipsregistersider i D', 'Vindu', d.fmtSek(vindu.oldest) + ' – ' + d.fmtSek(vindu.newest),
+    'HTTP-kall', klient.antall(), 'KI-kall', 0, 'Unike dokumenter', alle.length, 'Ekskludert', bort, 'Igjen', alle.length - bort],
+    [''], ['Spørring', 'Søketekst', 'Status per batch', 'Dokumenter', 'Context tom?', 'Feil/merknad']];
+  res.forEach(function (r) { rader.push([r.navn, r.searchterm, r.statuser.join(', '), r.dokumenter.length, opoint_kj_ctxTekst(r), r.feil || r.merknad]); });
+  rader.push(['']);
+  rader.push(['Ekskludert?', 'Grunn', 'Spørring', 'id_site', 'Domene', 'Tittel', 'URL']);
+  alle.forEach(function (x) {
+    rader.push([x.grunn ? 'JA' : '', x.grunn, x.sporring, x.doc.id_site, opoint_kj_domene(x.doc), opointTekstFelt(x.doc.header),
+      opoint_t3_artikkelUrl(x.doc)]);
+  });
+  return rader;
+}
+
+// =====================================================================
+// Steg 2d + 2e – Apollo/AWESOME (overstyrt) siste 30 dager, og range_count
+// for tre Apollo-varianter over 7 dager. Ingen KI. Fane "Opoint-test steg 2DE".
+// =====================================================================
+
+var OPOINT_KJ_T2DE_FANE = 'Opoint-test steg 2DE';
+var OPOINT_KJ_T2DE_MAKS_KALL = 30;
+
+function opoint_kj_testSteg2DE() {
+  var apiKey = opoint_t3_hentNokkel();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var startMs = Date.now();
+  var d = opoint_t3_datoFunksjoner();
+  var rader;
+  try {
+    var klient = opoint_t3_lagKlient(apiKey, OPOINT_KJ_T2DE_MAKS_KALL);
+    var tidUte = opoint_kj_tidsvakt(startMs, OPOINT_KJOR_TIDSBUDSJETT_MS);
+    var v30 = opoint_t3_vinduDager(30, startMs), v7 = opoint_t3_vinduDager(7, startMs);
+    var dDel = ['Apollo', 'AWESOME'].map(function (ord) {
+      var q = opoint_kj_finnOverstyring(ord);
+      return opoint_kj_hentSporring(klient, { navn: ord + ' (overstyrt)', searchterm: q }, v30,
+        OPOINT_KJOR_REQUESTED, OPOINT_KJOR_MAKS_BATCHER, true, tidUte);
+    });
+    var eDel = [['(1) bare Apollo', 'Apollo'], ['(2) Apollo AND ammonia*', 'Apollo AND ammonia*'],
+      ['(3) ny Apollo-spørring', opoint_kj_finnOverstyring('Apollo')]].map(function (p) {
+      return opoint_kj_hentSporring(klient, { navn: p[0], searchterm: p[1] }, v7, OPOINT_KJOR_REQUESTED, OPOINT_KJOR_MAKS_BATCHER, true, tidUte);
+    });
+    rader = opoint_kj_byggRaderSteg2DE(dDel, eDel, v30, v7, klient, d);
+  } catch (e) {
+    rader = [['FEIL', opointMaskerNokkel(String(e && e.message ? e.message : e), apiKey)]];
+  }
+  opoint_t3_skrivFane(ss, OPOINT_KJ_T2DE_FANE, rader, apiKey);
+  Logger.log('Skrevet til "' + OPOINT_KJ_T2DE_FANE + '".');
+}
+
+function opoint_kj_byggRaderSteg2DE(dDel, eDel, v30, v7, klient, d) {
+  var rader = [['Steg 2d + 2e', 'HTTP-kall', klient.antall(), 'Kalltak nådd?', klient.takNadd() ? 'Ja' : 'Nei', 'KI-kall', 0], [''],
+    ['2d: siste 30 dager', d.fmtSek(v30.oldest) + ' – ' + d.fmtSek(v30.newest)],
+    ['Spørring', 'Søketekst', 'Status per batch', 'Dokumenter', 'Context tom?', 'Feil']];
+  dDel.forEach(function (r) { rader.push([r.navn, r.searchterm, r.statuser.join(', '), r.dokumenter.length, opoint_kj_ctxTekst(r), r.feil]); });
+  rader.push(['Spørring', 'Dato', 'Tittel', 'Domene']);
+  dDel.forEach(function (r) {
+    r.dokumenter.forEach(function (doc) {
+      rader.push([r.navn, typeof doc.unix_timestamp === 'number' ? d.fmtSek(doc.unix_timestamp) : '', opointTekstFelt(doc.header), opoint_kj_domene(doc)]);
+    });
+  });
+  rader.push(['']);
+  rader.push(['2e: range_count, siste 7 dager', d.fmtSek(v7.oldest) + ' – ' + d.fmtSek(v7.newest)]);
+  rader.push(['Variant', 'Søketekst', 'range_count per batch', 'Returnerte dokumenter', 'Batcher', 'Context tom?', 'Feil']);
+  eDel.forEach(function (r) {
+    rader.push([r.navn, r.searchterm, r.rangeCount.join(', '), r.dokumenter.length, r.batcher, opoint_kj_ctxTekst(r), r.feil]);
   });
   return rader;
 }
