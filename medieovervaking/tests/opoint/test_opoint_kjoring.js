@@ -21,8 +21,8 @@ fs.readdirSync(__dirname + '/../..').filter(x => x.endsWith('.gs') && x !== 'Opo
 const kode = fs.readFileSync(__dirname + '/../../OpointKjoring.gs', 'utf8');
 assert.ok(!/newTrigger\(|MailApp\.|textrazor|readership|text:\s*1|getEffectiveUser|vurderTreffMedAI\(/.test(kode));
 // Del 4: én utsending, og bare til Script Property TEST_EPOST
-assert.strictEqual((kode.match(/GmailApp\.sendEmail/g) || []).length, 1);
-assert.ok(/getProperty\('TEST_EPOST'\)/.test(kode) && /GmailApp\.sendEmail\(String\(til\)\.trim\(\)/.test(kode));
+assert.strictEqual((kode.match(/GmailApp\.sendEmail/g) || []).length, 2); // e-posten + feilmeldingen (D 6e), begge til TEST_EPOST
+assert.ok((kode.match(/getProperty\('TEST_EPOST'\)/g) || []).length >= 2 && (kode.match(/GmailApp\.sendEmail\(String\(til\)\.trim\(\)/g) || []).length === 2);
 assert.ok(!/hentMottakere|FANE_MOTTAKERE/.test(kode));
 assert.strictEqual((kode.match(/api\.anthropic\.com/g) || []).length, 2); // enkeltkall og fetchAll i opoint_kj_lagKiTjeneste
 assert.ok(!/getSheetByName\((?:FANE_|'Sendte|'Artikkellogg|'Referansesett|'Kjøretidslogg|'Mottakere)/.test(kode));
@@ -871,7 +871,7 @@ console.log('Del 1-tester OK');
   assert.ok(tolket.every(x => x.url.startsWith('https://m.no/')));
   const tjSm = lagTj((b, n) => n === 1 ? 'beklager' : JSON.stringify({ setninger: [{ tekst: 'Noe skjedde.', sak: 2 }] }));
   const sm = f.opoint_kj_lagSammendrag(s3, tjSm);
-  assert.strictEqual(sm.reddet, 1); assert.strictEqual(sm.setninger.length, 1); assert.deepStrictEqual(tjSm.kallListe.map(b => b.max_tokens), [1500, 3000]);
+  assert.strictEqual(sm.reddet, 1); assert.strictEqual(sm.setninger.length, 1); assert.deepStrictEqual(tjSm.kallListe.map(b => b.max_tokens), [900, 1800]);
   assert.strictEqual(f.opoint_kj_lagSammendrag(s3.slice(0, 2), lagTj(() => '{}')).melding, 'Ingen middels-saker – ingen seksjon.');
   const rSm = f.opoint_kj_byggRaderSammendrag(sm);
   assert.ok(rSm.some(r => r[0] === 'Inndata') && rSm.some(r => r[3] === 'Noe skjedde.'));

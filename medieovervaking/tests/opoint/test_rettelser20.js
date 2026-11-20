@@ -142,7 +142,7 @@ assert.strictEqual(rr.length, 2 + 2); assert.ok(rr.some(r => r[8] === 'JA' && r[
 console.log('4 Representant OK');
 
 // ---- 7 og 8: recall-fasit og header ----
-assert.strictEqual(f.opoint_ft_fasitFor(vindu, { fmtSek: fmt }), '20'); assert.strictEqual(f.OPOINT_KJ_RECALL_FASIT['20'].saker.length, 8);
+assert.strictEqual(f.opoint_ft_fasitFor(vindu, { fmtSek: fmt }), '20'); assert.strictEqual(f.OPOINT_KJ_RECALL_FASIT['20'].saker.length, 9);
 assert.strictEqual(f.opoint_ft_fasitFor({ oldest: vindu.oldest + 86400, newest: vindu.newest + 86400 }, { fmtSek: fmt }), '');
 assert.ok(fs.readFileSync(__dirname + '/../../FellesTest.gs', 'utf8').includes("' søk, ' + st.dokumenter + ' artikler, ' + st.grupper + ' saker)'"));
 console.log('7–8 OK');

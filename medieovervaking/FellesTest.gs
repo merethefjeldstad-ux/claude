@@ -37,7 +37,7 @@ var ARKIV_URL = '';                    // v2 DEL 4: satt → lenken «Se alle tr
 var HOY_KREVER_TEMA = true;
 var MAKS_KORT = 8;                     // tall, eller '' for ingen grense
 var NORSK_HOVEDTEKST = false;          // C 5: norsk KI-tekst som hovedtekst på Opoint-kort (original ingress kort under)
-var FELLES_VARIANT = 'C';              // brukes i emne og fanenavn for backfill
+var FELLES_VARIANT = 'D';              // brukes i emne og fanenavn for backfill
 var KONTROLL_AKTIV = true;             // v2 DEL 3: kontroll-lesing før sending
 var KONTROLL_FANE = 'Kontroll-lesing';
 var KONTROLL_PER_KALL = 25;            // over 25 kort → to kall
@@ -123,6 +123,7 @@ function opoint_ft_kjorKjerne(spec) {
     op.ki = fase('Relevans/prioritet', function () { return opoint_kj_vurderSaker(op.saker, op.forb.oppsett, op.tjeneste, 1, vindu); });
     op.ki.gruppering = grupper.melding;
     // DEL 2.1/2.3: «samme hendelse?» og «Hva er nytt?» etter relevansvurderingen
+    op.faste = opoint_kj_brukFasteRegler(op.saker);   // D 1 og D 3
     op.etter = fase('Oppfølging-etterkontroll', function () {
       try { return opoint_kj_etterkontrollOppfolging(op.saker, sendte7, op.tjeneste); }
       catch (e) { return { melding: 'Etterkontroll feilet: ' + e.message, liste: [] }; }
@@ -161,7 +162,9 @@ function opoint_ft_kjorKjerne(spec) {
   op.norskHovedtekst = !!spec.norskHovedtekst;
   try { epost = opoint_ft_byggFellesEpost(as, op, vindu, d, merknader); } catch (e) { send.melding = 'E-post kunne ikke bygges: ' + e.message; }
   var feilFor = op.tjeneste ? op.tjeneste.kiFeil.length : 0;
-  if (epost) {
+  var forSent = Date.now() - t0 > FELLES_KONTROLL_FRIST_MS;
+  if (forSent) merknader.push('Andre språk og kontroll-lesing hoppet over (tid).');
+  if (epost && !forSent) {
     fase('Andre språk', function () {
       try {
         if (op.tjeneste) op.tjeneste.settFrist(t0 + FELLES_SISTE_KI_FRIST_MS + 45000);
@@ -170,7 +173,7 @@ function opoint_ft_kjorKjerne(spec) {
       } catch (e) { merknader.push('Andre språk feilet: ' + e.message); op.fremmed = null; }
     });
   }
-  if (epost && KONTROLL_AKTIV) {
+  if (epost && KONTROLL_AKTIV && !forSent) {
     fase('Kontroll-lesing', function () {
       try {
         op.kontroll = opoint_ft_kontrollLes({ epost: epost, saker: op.saker, sm: op.sm, tjeneste: op.tjeneste, vindu: vindu, d: d });
@@ -251,7 +254,8 @@ function opoint_ft_kjor1819() { kjorFellesTest('2026-11-18 07:30', '2026-11-19 0
 /** Rettelsene 20. nov: samme vindu som Felles-testen 20. nov (historisk nå: ingen logging til Sendte saker/Sendte artikler). */
 function opoint_ft_kjor1920() { kjorFellesTest('2026-11-19 07:30', '2026-11-20 07:30'); }
 
-var FELLES_RECALL_FRIST_MS = 5 * 60 * 1000;   // recall hoppes over hvis kjøringen har brukt mer enn 5 min
+var FELLES_RECALL_FRIST_MS = 5 * 60 * 1000;
+var FELLES_KONTROLL_FRIST_MS = 5 * 60 * 1000;   // D 6e: etter 5 min hoppes «andre språk» og kontroll-lesing over, e-posten sendes   // recall hoppes over hvis kjøringen har brukt mer enn 5 min
 
 /** Id i OPOINT_KJ_RECALL_FASIT med nøyaktig samme vindu, eller ''. */
 function opoint_ft_fasitFor(vindu, d) {
@@ -941,6 +945,8 @@ function opoint_ft_kontrollLes(innhold) {
   fjernForslag.forEach(function (f) {
     var k = f.k;
     if (k.nevnerOss || k.kategori === 'Om oss') { logg(k, 'KI', f.x.problem, f.x.alvorlighet, 'fjern_kort', 'ikke fjernet (eget prosjekt / Om oss)', k.tittel, ''); return; }
+    // D 4: Apps Script-treff vises alltid (også «Mulig irrelevant»). LNG-tankskip-kortet ble fjernet her 18. nov i C.
+    if (/AS/.test(k.opphav || '') || k.prioritet === 'irrelevant') { logg(k, 'KI', f.x.problem, f.x.alvorlighet, 'fjern_kort', 'ikke fjernet (Apps Script-treff vises alltid)', k.tittel, ''); return; }
     if (fjernet >= KONTROLL_MAKS_FJERN) { logg(k, 'KI', f.x.problem, f.x.alvorlighet, 'fjern_kort', 'ikke fjernet (maks ' + KONTROLL_MAKS_FJERN + ' nådd)', k.tittel, ''); return; }
     fjernet++; ut.overstyr.fjern[k.id] = true; ut.endret = true;
     logg(k, 'KI', f.x.problem, f.x.alvorlighet, 'fjern_kort', 'kort fjernet fra e-posten', k.tittel, '');
@@ -1281,7 +1287,9 @@ function kjorNesteBackfill() {
   var ok = res && /Sendt/.test(res.send.melding) && res.logget.indexOf('feilet') < 0;
   var sum = res ? opoint_ft_oppsummerKjoring(res) : null;
   var tilbake = '';
-  if (ok && neste.siste) tilbake = ' Backfill ferdig: ' + opoint_ft_gjenopprettParkerte(ss) + ' parkerte rader lagt tilbake i «Sendte saker».';
+  // D 7: parkerte rader (Felles-test 20. nov kl. 07:38) legges IKKE tilbake – backfill-radene for 20. nov er historikken.
+  // Ellers ville samme sak stå to ganger og regelen «maks én oppdatering» slå feil inn ved første daglige kjøring.
+  if (ok && neste.siste) tilbake = ' Backfill ferdig. Historikken 16.–20. nov ligger i «Sendte saker»; rader fra Felles-test 20. nov blir liggende i «' + BACKFILL_FANE_PARKERT + '».';
   opoint_ft_skrivBackfillStatus(ss, dag, [ok ? 'ferdig' : 'feilet', new Date(), sum ? sum.kort : '', sum ? sum.as : '', sum ? sum.op : '', sum ? sum.begge : '',
     sum ? sum.ellers : '', sum ? sum.oppfolging : '', sum ? sum.oppdatering : '', res ? Math.round(res.total / 1000) : '', res ? res.op.ki.kall : '',
     res ? Math.round((res.op.ki.kostnad || 0) * 10000) / 10000 : '', d.fmtSek(vindu.oldest) + ' – ' + d.fmtSek(vindu.newest),
@@ -1365,13 +1373,15 @@ function opoint_ft_raderVariant(op, epost) {
     'Poeng', 'Rang', 'Utfall', 'Merknad'],
     ['', '', 'Kort i A / B', v.antallA, v.antallB, 'HOY_KREVER_TEMA=' + HOY_KREVER_TEMA + ', MAKS_KORT=' + (MAKS_KORT || '–') + '; egne treff og Apps Script (kriterium 1) er alltid kort']];
   var jn = function (x) { return x === true ? 'ja' : x === false ? 'nei' : ''; };
+  var x0 = function (s) { return s.antallTilsvarende || 0; };
   (op.saker || []).forEach(function (s) {
     var r = s.kiResultat || {};
-    if (!r.hoyKandidat && r.prioritetA !== 'høy') return;
+    if (!r.hoyKandidat && r.prioritetA !== 'høy' && !r.stor && !(r.norsk && r.tema) && !r.verdensforste) return;   // D 3: også middels med stor eller norsk + tema
     if (s.asTreff) return;
     var utfall = s.oppfolging ? 'Oppfølging' : iOppd[s.id] ? 'oppdatering' : iKort[s.id] ? 'kort' : (iSm[s.id] || (s.imoGruppe && iSm[s.imoGruppe.id])) ? 'sammendrag' : 'kuttet';
     rader.push(['', s.id, opointTekstFelt(opoint_kj_visDoc(s).header), r.prioritetA || '', jn(r.stor), jn(r.tema), jn(r.norsk), jn(r.konkret),
-      r.poeng !== undefined ? r.poeng : opoint_kj_rangPoeng(r), r.rang || '', utfall, r.nedgradert ? 'nedgradert (' + r.nedgradert + ')' : r.loftet ? 'løftet (stor + tema)' : '']);
+      r.poeng !== undefined ? r.poeng : opoint_kj_rangPoeng(r), r.rang || '', utfall, (r.verdensforste ? 'verdensførste-regel (' + (x0(s)) + ' kilder) ' : '') +
+      (r.nedgradert ? 'nedgradert (' + r.nedgradert + ')' : r.loftet ? 'løftet (stor + tema)' : '') + ' – ' + (r.prioritetGrunn || '')]);
   });
   return rader;
 }
@@ -1411,16 +1421,31 @@ function opoint_ft_provNorskHovedtekst() {
 }
 
 // ---------------------------------------------------------------------
-// C 6: daglig testutsending man–fre ca. 07:35 (variant B), bare til TEST_EPOST
+// D 6: daglig testutsending ALLE dager lørdag 21. – fredag 27. nov. 2026, ca. 07:40, bare til TEST_EPOST
 // ---------------------------------------------------------------------
 var DAGLIG_FUNKSJON = 'opoint_ft_dagligKjor';
+var DAGLIG_VAKT_FUNKSJON = 'opoint_ft_dagligVakt';
+var DAGLIG_FRA = '2026-11-21';
+var DAGLIG_TIL = '2026-11-27';
 
-/** Oppretter ÉN daglig utløser (07:35, Europe/Oslo; Apps Script kjører innen ca. ±15 min). Kjører bare man–fre. */
+/** Datoene (yyyy-MM-dd) fra DAGLIG_FRA til og med DAGLIG_TIL. */
+function opoint_ft_dagligDatoer() {
+  var ut = [], t = Date.parse(DAGLIG_FRA + 'T12:00:00Z'), slutt = Date.parse(DAGLIG_TIL + 'T12:00:00Z');
+  for (; t <= slutt; t += 86400000) ut.push(new Date(t).toISOString().slice(0, 10));
+  return ut;
+}
+
+/**
+ * Oppretter to tidsutløsere i kopien: opoint_ft_dagligKjor hver dag ca. 07:40 (atHour(7).nearMinute(40), Europe/Oslo)
+ * og vakta opoint_ft_dagligVakt ca. 08:25 (sjekker at dagens kjøring ble ferdig). Funksjonene kjører bare 21.–27. nov.
+ * og fjerner utløserne etter 27. nov. Gamle utløsere for de samme funksjonene slettes først. Finnes andre utløsere,
+ * opprettes ingenting (de listes i loggen).
+ */
 function planleggDagligFellesTest() {
-  var andre = [];
+  var andre = [], slettet = 0;
   ScriptApp.getProjectTriggers().forEach(function (t) {
     var h = t.getHandlerFunction();
-    if (h === DAGLIG_FUNKSJON || h === FELLES_TRIGGER_FUNKSJON) ScriptApp.deleteTrigger(t);
+    if (h === DAGLIG_FUNKSJON || h === DAGLIG_VAKT_FUNKSJON || h === FELLES_TRIGGER_FUNKSJON) { ScriptApp.deleteTrigger(t); slettet++; }
     else andre.push(h + ' (' + t.getEventType() + ')');
   });
   if (andre.length) {
@@ -1428,27 +1453,174 @@ function planleggDagligFellesTest() {
       'Sjekk dem (de kan sende til andre mottakere) og fjern dem selv før du kjører planleggDagligFellesTest() på nytt.');
     return false;
   }
-  ScriptApp.newTrigger(DAGLIG_FUNKSJON).timeBased().everyDays(1).atHour(7).nearMinute(35).inTimezone('Europe/Oslo').create();
-  Logger.log('Satt opp ÉN daglig utløser: ' + DAGLIG_FUNKSJON + ' hver dag ca. 07:35 Europe/Oslo (Apps Script velger et tidspunkt innen ' +
-    'ca. ±15 min). Funksjonen avslutter selv lørdag og søndag. Variant B (HOY_KREVER_TEMA = true, MAKS_KORT = 8), LOGG_SENDTE = true, ' +
-    'emne «[Felles-daglig] Medieovervåking <dato>», kun til TEST_EPOST. Ingen andre utløsere finnes. Fjern med avbrytDagligFellesTest().');
+  ScriptApp.newTrigger(DAGLIG_FUNKSJON).timeBased().everyDays(1).atHour(7).nearMinute(40).inTimezone('Europe/Oslo').create();
+  ScriptApp.newTrigger(DAGLIG_VAKT_FUNKSJON).timeBased().everyDays(1).atHour(8).nearMinute(25).inTimezone('Europe/Oslo').create();
+  var datoer = opoint_ft_dagligDatoer();
+  Logger.log('Slettet ' + slettet + ' gamle utløser(e) for fellestesten. Ingen andre utløsere finnes i prosjektet.');
+  Logger.log('Opprettet 2 utløsere: (1) ' + DAGLIG_FUNKSJON + ' hver dag ca. 07:40 Europe/Oslo (Apps Script velger et tidspunkt innen ca. ±15 min); ' +
+    '(2) ' + DAGLIG_VAKT_FUNKSJON + ' hver dag ca. 08:25 (varsler TEST_EPOST hvis dagens kjøring ikke ble ferdig, f.eks. tidsgrensen på 6 min).');
+  Logger.log('Kjøringer (' + datoer.length + '): ' + datoer.map(function (d0) { return d0 + ' ca. 07:40 (vindu ' + opoint_ft_forrigeDag(d0) + ' 07:30 – ' + d0 + ' 07:30)'; }).join('; ') + '.');
+  Logger.log('Variant: HOY_KREVER_TEMA = true, MAKS_KORT = 8, LOGG_SENDTE = true. Emne «[Felles-daglig] Medieovervåking <dato>», kun til TEST_EPOST. ' +
+    'Utløserne slettes automatisk etter siste kjøring ' + DAGLIG_TIL + '. Fjern dem før med avbrytDagligFellesTest().');
   return true;
 }
 
+function opoint_ft_forrigeDag(d0) { return new Date(Date.parse(d0 + 'T12:00:00Z') - 86400000).toISOString().slice(0, 10); }
+
+/** Fjerner alle utløsere for den daglige testen (kjøring og vakt). */
 function avbrytDagligFellesTest() {
   var n = 0;
-  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === DAGLIG_FUNKSJON) { ScriptApp.deleteTrigger(t); n++; } });
-  Logger.log('avbrytDagligFellesTest: fjernet ' + n + ' daglig(e) utløser(e).');
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    var h = t.getHandlerFunction();
+    if (h === DAGLIG_FUNKSJON || h === DAGLIG_VAKT_FUNKSJON) { ScriptApp.deleteTrigger(t); n++; }
+  });
+  Logger.log('avbrytDagligFellesTest: fjernet ' + n + ' utløser(e).');
   return n;
 }
 
-/** Kjøres av den daglige utløseren. Hopper over lørdag/søndag (Oslo). */
-function opoint_ft_dagligKjor(naaMs) {
+/** D 6e: kort feilmelding til TEST_EPOST + rad i «KI-feil». Kaster aldri. */
+function opoint_ft_dagligFeil(dato, aarsak) {
+  var tid = Utilities.formatDate(new Date(), 'Europe/Oslo', 'yyyy-MM-dd HH:mm');
+  try { opoint_ft_loggOpointFeil(SpreadsheetApp.getActiveSpreadsheet(), 'Daglig felleskjøring ' + dato + ': ' + aarsak); } catch (e) { /* bare logg */ }
+  try { opoint_kj_sendFeilmelding('[Felles-daglig] FEIL ' + dato, 'Den daglige felleskjøringen for ' + dato + ' feilet.\n\nÅrsak: ' + aarsak + '\nKlokkeslett: ' + tid + ' (Europe/Oslo)'); }
+  catch (e) { Logger.log('Feilmelding kunne ikke sendes: ' + e.message); }
+}
+
+/** Kjøres av utløseren ca. 07:40. Vindu: 24 t som slutter kl. 07:30 samme dag (automatisk vindu). */
+function opoint_ft_dagligKjor(e, naaMs) {
   var naa = new Date(typeof naaMs === 'number' ? naaMs : Date.now());
-  var ukedag = Number(Utilities.formatDate(naa, 'Europe/Oslo', 'u'));   // 1 = mandag … 7 = søndag
-  if (ukedag >= 6) { Logger.log('opoint_ft_dagligKjor: helg – ingen kjøring.'); return null; }
-  HOY_KREVER_TEMA = true; MAKS_KORT = 8; LOGG_SENDTE = true;
   var dato = Utilities.formatDate(naa, 'Europe/Oslo', 'yyyy-MM-dd');
-  return kjorFellesTest('', '', { fane: 'Felles-daglig', filprefiks: 'Felles-daglig', merknad: 'daglig',
-    emne: function () { return '[Felles-daglig] Medieovervåking ' + dato; } });
+  if (dato < DAGLIG_FRA) { Logger.log('opoint_ft_dagligKjor: ' + dato + ' er før ' + DAGLIG_FRA + ' – ingen kjøring.'); return null; }
+  if (dato > DAGLIG_TIL) { avbrytDagligFellesTest(); Logger.log('opoint_ft_dagligKjor: perioden er over – utløserne er fjernet.'); return null; }
+  var props = PropertiesService.getScriptProperties();
+  props.setProperty('FELLES_DAGLIG_' + dato, 'startet ' + naa.toISOString());
+  HOY_KREVER_TEMA = true; MAKS_KORT = 8; LOGG_SENDTE = true;
+  var res = null;
+  try {
+    res = kjorFellesTest('', '', { fane: 'Felles-daglig', filprefiks: 'Felles-daglig', merknad: 'daglig',
+      emne: function () { return '[Felles-daglig] Medieovervåking ' + dato; } });
+  } catch (err) {
+    opoint_ft_dagligFeil(dato, 'krasj: ' + (err && err.message ? err.message : err));
+  }
+  if (res && !/Sendt/.test(res.send.melding)) opoint_ft_dagligFeil(dato, 'e-posten ble ikke sendt: ' + res.send.melding);
+  props.setProperty('FELLES_DAGLIG_' + dato, (res && /Sendt/.test(res.send.melding) ? 'ferdig ' : 'feilet ') + new Date().toISOString());
+  return res;
+}
+
+/** Vakt ca. 08:25: varsler hvis dagens kjøring ikke ble ferdig (f.eks. drept av tidsgrensen på 6 min). Rydder etter siste dag. */
+function opoint_ft_dagligVakt(e, naaMs) {
+  var naa = new Date(typeof naaMs === 'number' ? naaMs : Date.now());
+  var dato = Utilities.formatDate(naa, 'Europe/Oslo', 'yyyy-MM-dd');
+  if (dato < DAGLIG_FRA) return null;
+  if (dato > DAGLIG_TIL) { avbrytDagligFellesTest(); return null; }
+  var st = PropertiesService.getScriptProperties().getProperty('FELLES_DAGLIG_' + dato) || '';
+  if (!/^ferdig|^feilet/.test(st)) opoint_ft_dagligFeil(dato, st ? 'kjøringen startet (' + st.replace(/^startet /, '') + ') men ble ikke ferdig – trolig stoppet av tidsgrensen på 6 minutter' : 'kjøringen startet ikke');
+  if (dato === DAGLIG_TIL) { avbrytDagligFellesTest(); Logger.log('Siste dag (' + DAGLIG_TIL + '): utløserne er fjernet.'); }
+  return st;
+}
+
+
+// =====================================================================
+// D 5: dekning – eksakt tittelsøk, hvilken spørring som burde fanget saken, BC Ferries-forslag og Splash247
+// Kjør opoint_ft_dekningD() (ca. 30–45 Opoint-kall, ingen KI). Resultat i fanen «Dekning D».
+// =====================================================================
+var DEKNING_FANE = 'Dekning D';
+var DEKNING_MAKS_KALL = 60;
+// url: legg inn URL-en hvis du har den – da sjekkes den mot treffene.
+var DEKNING_SAKER = [
+  { navn: 'Sea1 Citrine', dato: '2026-11-20', tittel: 'Another methanol-ready offshore energy support vessel launches in China', domene: 'offshore-energy.biz', url: '' },
+  { navn: 'Bilbao OPS', dato: '2026-11-20', tittel: 'Shore Power Summit: Port of Bilbao ramping up its OPS network', domene: 'worldcargonews.com', url: '' },
+  { navn: 'Illinois-ferge', dato: '2026-11-19', tittel: 'Illinois begins electric ferry procurement', domene: 'bairdmaritime.com', url: '' },
+  { navn: 'BC Ferries (Riviera)', dato: '2026-11-18', tittel: 'BC Ferries', domene: 'rivieramm.com', url: '', ord: ['bc ferries', 'hybrid'] },
+  { navn: 'Splash247 solar moment', dato: '2026-11-20', tittel: 'Will shipping get its solar moment?', domene: 'splash247.com', url: '' },
+  { navn: 'InfluenceMap (indeksmangel?)', dato: '2026-11-18', tittel: 'InfluenceMap', domene: 'cyprusshippingnews.com', url: '', ord: ['influencemap'] },
+  { navn: 'BIMCO støymåling (indeksmangel?)', dato: '2026-11-18', tittel: 'BIMCO underwater noise', domene: 'hellenicshippingnews.com', url: '', ord: ['bimco', 'noise'] },
+  { navn: 'LR Fuel for Thought: Ports (indeksmangel?)', dato: '2026-11-17', tittel: 'Fuel for Thought: Ports', domene: 'cyprusshippingnews.com', url: '' }
+];
+// D 5d: forslag til ny B-spørring for hybrid/elektriske ferjer (testes, legges IKKE inn i kjøringen)
+var DEKNING_FORSLAG_HYBRID = 'header:hybrid AND (ferry OR ferries OR vessel* OR ship)';
+
+function opoint_ft_dekningD() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet(), d = opoint_t3_datoFunksjoner(), t0 = Date.now();
+  var apiKey = opoint_t3_hentNokkel(), rader = [];
+  try {
+    var kl = opoint_t3_lagKlient(apiKey, DEKNING_MAKS_KALL), tidUte = opoint_kj_tidsvakt(t0, 5 * 60 * 1000);
+    var oppsett = opoint_kj_lesOppsett(ss);
+    var sporringer = opoint_kj_byggAlleSporringer(OPOINT_T2_SPORRINGER, oppsett.tier2, oppsett.tilordningD);
+    var prio = opoint_kj_lesKildeprioritet(ss);
+    rader.push(['Dekning D', 'Sak', 'Dato', 'Funnet', 'Tittel i Opoint', 'Domene', 'Site-id', 'Språk', 'Publisert', 'Nivå', 'Spørring(er) som matcher',
+      'Antall i spørringen (vindu)', 'Årsak hvis ikke med']);
+    DEKNING_SAKER.forEach(function (x) {
+      if (tidUte()) return;
+      var v = opoint_ft_backfillVindu(x.dato), vid = { oldest: v.oldest - 2 * 86400, newest: v.newest + 86400 };
+      var q = x.ord ? x.ord.map(function (o) { return /\s/.test(o) ? '"' + o + '"' : o; }).join(' AND ') : '"' + x.tittel.replace(/"/g, '') + '"';
+      var r = opoint_kj_hentSporring(kl, { navn: 'dekning', searchterm: q }, vid, 25, 1, true, tidUte);
+      var docs = r.dokumenter || [];
+      var mål = docs.filter(function (dd) {
+        var tt = opointTekstFelt(dd.header).toLowerCase(), dom = opoint_kj_domene(dd);
+        var urlOk = x.url && opoint_kj_normUrl(opoint_t3_artikkelUrl(dd)) === opoint_kj_normUrl(x.url);
+        return urlOk || ((x.ord ? x.ord.every(function (o) { return tt.indexOf(o.toLowerCase()) >= 0; }) : opoint_t3_tittelLikhet(opointTekstFelt(dd.header), x.tittel) >= 0.6));
+      });
+      mål.sort(function (a2, b2) { return (opoint_kj_domene(b2).indexOf(x.domene) >= 0 ? 1 : 0) - (opoint_kj_domene(a2).indexOf(x.domene) >= 0 ? 1 : 0); });
+      var doc = mål[0];
+      if (!doc) {
+        rader.push(['', x.navn, x.dato, 'nei', '', '', '', '', '', '', '', '', r.feil ? 'søket feilet: ' + r.feil :
+          'ikke i Opoint-indeksen (fritt søk ' + q + ', ' + docs.length + ' dokumenter, ingen med riktig tittel)']);
+        return;
+      }
+      var dom = opoint_kj_domene(doc), niva = opoint_kj_nivaFor(dom, prio).niva, sprak = opoint_kj_sprak(doc);
+      var tekst = (opointTekstFelt(doc.header) + ' ' + opoint_kj_ingress(doc)).toLowerCase();
+      // Hvilke av våre spørringer har hovedordet i tittelen? Bekreft med søk: (spørring) AND "tittel" i dagens vindu.
+      var kand = sporringer.filter(function (sp) {
+        if (sp.strom === 'D' || sp.strom === 'A') return false;
+        return opoint_kj_hovedledd(sp.searchterm).some(function (l) { var lav = l.toLowerCase().replace(/\*$/, ''); return lav && opointTekstFelt(doc.header).toLowerCase().indexOf(lav) >= 0; });
+      }).slice(0, 3);
+      var treff = [], antall = [];
+      kand.forEach(function (sp) {
+        if (tidUte()) return;
+        var r2 = opoint_kj_hentSporring(kl, { navn: sp.navn, searchterm: '(' + sp.searchterm + ') AND "' + opointTekstFelt(doc.header).replace(/"/g, '').slice(0, 90) + '"' }, v, 10, 1, true, tidUte);
+        if ((r2.dokumenter || []).length) treff.push(sp.navn);
+        var r3 = opoint_kj_hentSporring(kl, sp, v, 1, 1, true, tidUte);
+        antall.push(sp.navn + ': ' + (r3.rangeCount && r3.rangeCount.length ? r3.rangeCount[0] : '?'));
+      });
+      var iVindu = typeof doc.unix_timestamp === 'number' && doc.unix_timestamp >= v.oldest && doc.unix_timestamp < v.newest;
+      var andnot = OPOINT_B_ANDNOT_ORD.filter(function (o) { var ren = o.replace(/"/g, '').replace(/\*$/, '').toLowerCase(); return ren && tekst.indexOf(ren) >= 0; });
+      var aarsak = [];
+      if (!iVindu) aarsak.push('publisert utenfor vinduet ' + d.fmtSek(v.oldest) + ' – ' + d.fmtSek(v.newest));
+      if (niva === 4) aarsak.push('kildenivå 4');
+      if (OPOINT_KJOR_SPRAK_TILLATT.indexOf(sprak) < 0) aarsak.push('språk ' + sprak);
+      if (andnot.length) aarsak.push('ANDNOT-ord: ' + andnot.join(', '));
+      if (!kand.length) aarsak.push('ingen av våre B/C-spørringer har hovedordet i tittelen');
+      else if (!treff.length) aarsak.push('spørringen(e) treffer ikke artikkelen (kontekstord mangler?)');
+      else if (antall.some(function (a3) { return Number(a3.split(': ')[1]) > OPOINT_KJOR_REQUESTED * OPOINT_KJOR_MAKS_BATCHER; })) aarsak.push('spørringen har flere treff enn taket på ' + (OPOINT_KJOR_REQUESTED * OPOINT_KJOR_MAKS_BATCHER) + ' – artikkelen kom utenfor de første 100');
+      rader.push(['', x.navn, x.dato, 'ja', opointTekstFelt(doc.header), dom, doc.id_site || '', sprak, typeof doc.unix_timestamp === 'number' ? d.fmtSek(doc.unix_timestamp) : '',
+        niva, treff.join(', ') || (kand.length ? '(kandidater: ' + kand.map(function (sp) { return sp.navn; }).join(', ') + ')' : ''), antall.join('; '), aarsak.join('; ') || 'skulle vært hentet – sjekk fanen for datoen']);
+    });
+    // D 5d: forslag til hybrid/elektrisk ferje-spørring, testet på 18. nov
+    var v18 = opoint_ft_backfillVindu('2026-11-18');
+    var sp = { navn: 'Forslag: B hybrid ferry', searchterm: DEKNING_FORSLAG_HYBRID + ' ANDNOT ' + opoint_kj_bAndnot([]) };
+    var rf = opoint_kj_hentSporring(kl, sp, v18, 25, 2, true, tidUte);
+    rader.push(['']);
+    rader.push(['Forslag D 5d', sp.searchterm, 'Vindu 17.–18. nov', 'Treff: ' + (rf.dokumenter || []).length + (rf.rangeCount && rf.rangeCount.length ? ' (range_count ' + rf.rangeCount[0] + ')' : ''),
+      'BC Ferries med: ' + ((rf.dokumenter || []).some(function (dd) { return /bc ferries/i.test(opointTekstFelt(dd.header)); }) ? 'ja' : 'nei')]);
+    (rf.dokumenter || []).forEach(function (dd) { rader.push(['', '', '', '', opointTekstFelt(dd.header), opoint_kj_domene(dd), '', opoint_kj_sprak(dd)]); });
+    // D 5e: Splash247 – site-id fra en kjent Splash-artikkel, så alle Splash-artikler 19.–20. nov
+    var rs = opoint_kj_hentSporring(kl, { navn: 'splash-id', searchterm: '"China clears remotely controlled electric boxship"' }, { oldest: v18.oldest, newest: v18.newest + 3 * 86400 }, 10, 1, true, tidUte);
+    var sd = (rs.dokumenter || []).filter(function (dd) { return /splash247/.test(opoint_kj_domene(dd)); })[0];
+    rader.push(['']);
+    if (!sd) rader.push(['Splash247', 'Fant ikke site-id (ingen Splash247-dokument for kjent artikkel).']);
+    else {
+      var v20 = opoint_ft_backfillVindu('2026-11-20');
+      var rs2 = opoint_kj_hentSporring(kl, { navn: 'splash-site', searchterm: 'site:' + sd.id_site }, { oldest: v20.oldest - 86400, newest: v20.newest + 86400 }, 25, 2, true, tidUte);
+      var solar = (rs2.dokumenter || []).filter(function (dd) { return /solar moment/i.test(opointTekstFelt(dd.header)); })[0];
+      rader.push(['Splash247', 'site-id ' + sd.id_site, 'Artikler 18.–21. nov: ' + (rs2.dokumenter || []).length, '«Will shipping get its solar moment?» i site-søket: ' + (solar ? 'ja (' + d.fmtSek(solar.unix_timestamp) + ')' : 'nei'),
+        solar ? 'Kan hentes ved å legge site:' + sd.id_site + ' til i en D-spørring med maritime temaord' : 'Originalen finnes ikke i Opoint for Splash247 – å legge Splash247 til i D hjelper ikke']);
+      (rs2.dokumenter || []).slice(0, 25).forEach(function (dd) { rader.push(['', '', '', '', opointTekstFelt(dd.header), opoint_kj_domene(dd), dd.id_site, '', typeof dd.unix_timestamp === 'number' ? d.fmtSek(dd.unix_timestamp) : '']); });
+    }
+    rader.push(['']); rader.push(['Opoint-kall', kl.antall ? kl.antall() : '']);
+  } catch (e) {
+    rader.push(['FEIL', opointMaskerNokkel(String(e && e.message ? e.message : e), apiKey)]);
+  }
+  opoint_t3_skrivFane(ss, DEKNING_FANE, rader, apiKey);
+  Logger.log('Skrevet til «' + DEKNING_FANE + '».');
 }

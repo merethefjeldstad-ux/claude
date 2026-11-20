@@ -93,18 +93,37 @@ assert.ok(!en0.html.includes('Original:') && en0.html.includes('Norway-based TMC
 assert.strictEqual(f.NORSK_HOVEDTEKST, false);
 console.log('5 OK');
 
-// ---- 6: daglig utløser ----
+// ---- 6: daglig utløser (D: alle dager 21.–27. nov, kjøring + vakt) ----
 let utl = [];
 const lagUtl = (h, type) => ({ getHandlerFunction: () => h, getEventType: () => type || 'CLOCK' });
-const bygger = { timeBased: () => bygger, everyDays: n => { bygger.n = n; return bygger; }, atHour: h => { bygger.h = h; return bygger; }, nearMinute: m => { bygger.m = m; return bygger; },
-  inTimezone: z => { bygger.z = z; return bygger; }, create: () => utl.push(lagUtl(f.DAGLIG_FUNKSJON)) };
-ctx.ScriptApp = { getProjectTriggers: () => utl.slice(), deleteTrigger: t => { utl = utl.filter(x => x !== t); }, newTrigger: h => { bygger.handler = h; return bygger; } };
+const laget = [];
+const nyBygger = h => { const b = { h: h, timeBased: () => b, everyDays: n => { b.n = n; return b; }, atHour: x => { b.time = x; return b; }, nearMinute: m => { b.m = m; return b; },
+  inTimezone: z => { b.z = z; return b; }, create: () => { laget.push(b); utl.push(lagUtl(h)); } }; return b; };
+ctx.ScriptApp = { getProjectTriggers: () => utl.slice(), deleteTrigger: t => { utl = utl.filter(x => x !== t); }, newTrigger: nyBygger };
 utl = [lagUtl('kjorMedieovervaking')];
 assert.strictEqual(f.planleggDagligFellesTest(), false); assert.strictEqual(utl.length, 1); assert.ok(logg.some(l => l.startsWith('STOPP: kopien har andre utløsere')));
-utl = [lagUtl(f.DAGLIG_FUNKSJON)];
-assert.strictEqual(f.planleggDagligFellesTest(), true); assert.strictEqual(utl.length, 1);
-assert.deepStrictEqual([bygger.handler, bygger.n, bygger.h, bygger.m, bygger.z], ['opoint_ft_dagligKjor', 1, 7, 35, 'Europe/Oslo']);
-assert.strictEqual(f.avbrytDagligFellesTest(), 1); assert.strictEqual(utl.length, 0);
-ukedag = '6'; assert.strictEqual(f.opoint_ft_dagligKjor(), null); // lørdag
+utl = [lagUtl(f.DAGLIG_FUNKSJON), lagUtl(f.DAGLIG_FUNKSJON)];
+assert.strictEqual(f.planleggDagligFellesTest(), true); assert.strictEqual(utl.length, 2); // gamle slettet, to nye
+assert.deepStrictEqual(J(laget.map(b => [b.h, b.n, b.time, b.m, b.z])), [['opoint_ft_dagligKjor', 1, 7, 40, 'Europe/Oslo'], ['opoint_ft_dagligVakt', 1, 8, 25, 'Europe/Oslo']]);
+assert.deepStrictEqual(J(f.opoint_ft_dagligDatoer()), ['2026-11-21', '2026-11-22', '2026-11-23', '2026-11-24', '2026-11-25', '2026-11-26', '2026-11-27']);
+assert.ok(logg.some(l => l.includes('2026-11-21 ca. 07:40 (vindu 2026-11-20 07:30 – 2026-11-21 07:30)')));
+assert.strictEqual(f.avbrytDagligFellesTest(), 2); assert.strictEqual(utl.length, 0);
+// Før perioden: ingen kjøring; etter perioden: utløserne fjernes
+utl = [lagUtl(f.DAGLIG_FUNKSJON), lagUtl(f.DAGLIG_VAKT_FUNKSJON)];
+assert.strictEqual(f.opoint_ft_dagligKjor({}, Date.parse('2026-11-20T07:40:00+01:00')), null); assert.strictEqual(utl.length, 2);
+assert.strictEqual(f.opoint_ft_dagligKjor({}, Date.parse('2026-11-28T07:40:00+01:00')), null); assert.strictEqual(utl.length, 0);
+// Vakt: kjøringen ble ikke ferdig → feilmelding til TEST_EPOST + KI-feil; siste dag rydder
+const sendtF = [], pr = { TEST_EPOST: 't@x.no' };
+ctx.PropertiesService = { getScriptProperties: () => ({ getProperty: n => pr[n], setProperty: (n, v) => { pr[n] = v; } }) };
+ctx.GmailApp = { sendEmail: (til, emne, tekst) => sendtF.push({ til, emne, tekst }) };
+const kiFeil = [];
+ctx.SpreadsheetApp = { getActiveSpreadsheet: () => ({ getSheetByName: () => ({ getLastRow: () => 1, getRange: () => ({ setValues: v => kiFeil.push(v) }) }), insertSheet: () => ({}) }) };
+ukedag = '5';
+ctx.Utilities.formatDate = (t, tz, fm) => fm === 'yyyy-MM-dd' ? new Date(t.getTime() + 3600e3).toISOString().slice(0, 10) : fm === 'yyyy-MM-dd HH:mm' ? '2026-11-27 08:25' : 'x';
+pr['FELLES_DAGLIG_2026-11-27'] = 'startet 2026-11-27T06:40:00Z';
+utl = [lagUtl(f.DAGLIG_FUNKSJON), lagUtl(f.DAGLIG_VAKT_FUNKSJON)];
+f.opoint_ft_dagligVakt({}, Date.parse('2026-11-27T08:25:00+01:00'));
+assert.strictEqual(sendtF.length, 1); assert.strictEqual(sendtF[0].til, 't@x.no'); assert.ok(/tidsgrensen/.test(sendtF[0].tekst) && /08:25/.test(sendtF[0].tekst));
+assert.strictEqual(utl.length, 0); // siste dag: ryddet
 console.log('6 OK');
 console.log('Alle C-tester OK');

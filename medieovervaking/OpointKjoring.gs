@@ -1653,8 +1653,54 @@ function opoint_kj_kiBrukerTekst(k, sak) {
   var fs = k.doc.first_source || {};
   var kilde = fs.sitename || fs.name || k.domene || '';
   var ingress = sak ? opoint_kj_sakIngress(sak).tekst : opoint_kj_ingress(k.doc);
+  // D 3: andre titler i gruppen (NYK 18. nov: «World's first» sto bare hos de andre kildene)
+  var andre = sak ? opoint_kj_andreTitler(sak, 4) : [];
   return 'Overskrift: ' + opointTekstFelt(k.doc.header).replace(/\s+/g, ' ').trim() + (ingress ? '\nIngress: ' + ingress : '') +
-    (kilde ? '\nKilde: ' + kilde : '');
+    (kilde ? '\nKilde: ' + kilde : '') + (andre.length ? '\nAndre kilder (' + (sak.antallTilsvarende || andre.length) + '), titler: ' + andre.join(' | ') : '');
+}
+
+/** Opptil n andre ulike titler i gruppen (medlemmer og sammenslåtte dokumenter), uten representantens. */
+function opoint_kj_andreTitler(sak, n) {
+  var egen = opointTekstFelt(opoint_kj_visDoc(sak).header).toLowerCase().trim(), ut = [], sett = {};
+  sett[egen] = true;
+  sak.medlemmer.forEach(function (m) {
+    [m.doc].concat((m.slattSammen || []).map(function (x) { return x.doc; })).forEach(function (d0) {
+      var t = opointTekstFelt(d0 && d0.header).replace(/\s+/g, ' ').trim();
+      if (t && !sett[t.toLowerCase()] && ut.length < n) { sett[t.toLowerCase()] = true; ut.push(opointKort(t, 120)); }
+    });
+  });
+  return ut;
+}
+
+// D 3 og D 1: regler etter KI-vurderingen
+var OPOINT_KJ_VF_RE = /world['’]?s first|world-first|first[- ]ever|verdens første|verdensførste|for første gang i verden/i;
+var OPOINT_KJ_VF_HENDELSE_RE = /unveil|\bnam(e|es|ed|ing)\b|christen|deliver|launch|handover|hand(s|ed)? over|dåp|døpt|levert|overlevert|sjøsatt|i drift|enters service/i;
+var OPOINT_KJ_VF_SKIP_RE = /vessel|ship|carrier|ferry|tanker|tug|bulker|boxship|skip|ferje|ferge|fartøy|båt/i;
+var OPOINT_KJ_VF_MIN_KILDER = 5;
+/**
+ * D 3: verdensførste skip som er avduket, dåpt eller levert, med minst 5 andre kilder → «stor» og høy.
+ * D 1: norsk aktør + tema blir minst middels (aldri lav).
+ */
+function opoint_kj_brukFasteRegler(saker) {
+  var ut = { verdensforste: [], norskMiddels: [] };
+  saker.forEach(function (s) {
+    var r = s.kiResultat;
+    if (!r || r.relevant !== true || s.asTreff || s.sprakEkskludert || s.oppfolging) return;
+    var tekster = [opointTekstFelt(opoint_kj_visDoc(s).header), opoint_kj_sakIngress(s).tekst].concat(opoint_kj_andreTitler(s, 30)).join(' || ');
+    if ((s.antallTilsvarende || 0) >= OPOINT_KJ_VF_MIN_KILDER && OPOINT_KJ_VF_RE.test(tekster) && OPOINT_KJ_VF_HENDELSE_RE.test(tekster) && OPOINT_KJ_VF_SKIP_RE.test(tekster)) {
+      r.stor = true; r.verdensforste = true;
+      if (r.prioritet !== 'høy') {
+        r.prioritet = 'høy';
+        r.prioritetGrunn = (r.prioritetGrunn ? r.prioritetGrunn + ' ' : '') + '(regel: verdensførste skip avduket/dåpt/levert, ' + s.antallTilsvarende + ' kilder → høy)';
+      }
+      ut.verdensforste.push(s);
+    }
+    if (r.norsk === true && r.tema === true && r.prioritet === 'lav') {
+      r.prioritet = 'middels'; r.prioritetGrunn = (r.prioritetGrunn ? r.prioritetGrunn + ' ' : '') + '(regel: norsk aktør + tema → minst middels)';
+      ut.norskMiddels.push(s);
+    }
+  });
+  return ut;
 }
 
 /** Tolker én sak i svaret. null hvis ugyldig. */
@@ -2445,9 +2491,20 @@ function opoint_kj_settDagensEpost(saker, apps, vindu, dagTekst) {
 var OPOINT_KJ_SAMMENDRAG_MAX_TOKENS = 1500; // rettelse 6: 600 ga max_tokens 19. og 20. nov (begge forsøk)
 var OPOINT_KJ_SAMMENDRAG_MAKS_SETNINGER = 5;
 var OPOINT_KJ_SAMMENDRAG_MAKS_ORD = 120;
+// D 2: flere enn 5 middels-saker → opptil 8 setninger / 180 ord (900 tokens)
+var OPOINT_KJ_SAMMENDRAG_LANG = { setninger: 8, ord: 180, tokens: 900 };
+function opoint_kj_sammendragGrenser(antall) {
+  return antall > OPOINT_KJ_SAMMENDRAG_MAKS_SETNINGER ? OPOINT_KJ_SAMMENDRAG_LANG :
+    { setninger: OPOINT_KJ_SAMMENDRAG_MAKS_SETNINGER, ord: OPOINT_KJ_SAMMENDRAG_MAKS_ORD, tokens: OPOINT_KJ_SAMMENDRAG_MAX_TOKENS };
+}
+function opoint_kj_sammendragSystem(g) {
+  return OPOINT_KJ_SAMMENDRAG_SYSTEM.split('maks ' + OPOINT_KJ_SAMMENDRAG_MAKS_SETNINGER + ' setninger og maks ' + OPOINT_KJ_SAMMENDRAG_MAKS_ORD + ' ord')
+    .join('maks ' + g.setninger + ' setninger og maks ' + g.ord + ' ord')
+    .split('flere enn ' + OPOINT_KJ_SAMMENDRAG_MAKS_SETNINGER + '.').join('flere enn ' + g.setninger + '.');
+}
 var OPOINT_KJ_SAMMENDRAG_SYSTEM =
   'Du skriver seksjonen «Ellers i bransjen» i en norsk medieovervåking. Du får nummererte saker med overskrift og ' +
-  'ingress. Skriv maks ' + OPOINT_KJ_SAMMENDRAG_MAKS_SETNINGER + ' setninger og maks ' + OPOINT_KJ_SAMMENDRAG_MAKS_ORD +
+  'ingress, sortert etter nyhetsverdi. Saker merket [NORSK] eller [VIKTIG] skal alltid få en setning. Skriv maks ' + OPOINT_KJ_SAMMENDRAG_MAKS_SETNINGER + ' setninger og maks ' + OPOINT_KJ_SAMMENDRAG_MAKS_ORD +
   ' ord til sammen, på flytende norsk. Hver setning bygger på nøyaktig én sak og oppgir nummeret til den. Bruk bare ' +
   'det som står i overskriften og ingressen: ingen tall, navn, steder eller årsaker som ikke står der, ingen vurderinger ' +
   'og ingen kommentarer om at teksten er kort eller avkuttet. Velg de viktigste sakene hvis det er flere enn ' +
@@ -2473,16 +2530,21 @@ function opoint_kj_sammendragInndata(saker) {
       return;
     }
     if ((s.kiResultat.prioritet || 'middels') !== 'middels') return;
-    var doc = opoint_kj_visDoc(s);
+    var doc = opoint_kj_visDoc(s), r = s.kiResultat;
     ut.push({ sak: s.id, tittel: opointTekstFelt(doc.header).replace(/\s+/g, ' ').trim(), ingress: opoint_kj_sakIngress(s).tekst,
-      url: opoint_t3_artikkelUrl(doc), kilde: opoint_kj_kildeNavn(s.representant) });
+      url: opoint_t3_artikkelUrl(doc), kilde: opoint_kj_kildeNavn(s.representant),
+      norsk: !!(r.norsk && r.tema), viktig: r.nedgradert === 'tak' || r.stor === true,
+      verdi: (r.nedgradert === 'tak' ? 8 : 0) + (r.norsk && r.tema ? 6 : 0) + (r.stor ? 4 : 0) + (r.tema ? 2 : 0) + (r.norsk ? 1 : 0) + Math.min(2, (s.antallTilsvarende || 0) / 5) });
   });
+  // D 2: rangert etter nyhetsverdi (kuttet over MAKS_KORT, norsk + tema, stor, tema), IMO-grupper beholder plassen sin først
+  ut.sort(function (a, b) { return (b.verdi || 0) - (a.verdi || 0); });
   ut.forEach(function (x, i) { x.nr = i + 1; });
   return ut;
 }
 
 /** Tolker og strammer inn: maks 5 setninger, maks 120 ord, gyldig saksnummer. null ved parsefeil. */
-function opoint_kj_tolkSammendrag(tekst, inndata) {
+function opoint_kj_tolkSammendrag(tekst, inndata, grenser) {
+  var gr = grenser || opoint_kj_sammendragGrenser(0);
   var o = opoint_kj_parseJson(tekst);
   if (!o || !Array.isArray(o.setninger)) {
     // Rettelse 6: avkuttet svar (max_tokens) – berg de hele setningene som står før kuttet
@@ -2492,14 +2554,14 @@ function opoint_kj_tolkSammendrag(tekst, inndata) {
     o = { setninger: liste };
   }
   var ut = [], ord = 0;
-  for (var i = 0; i < o.setninger.length && ut.length < OPOINT_KJ_SAMMENDRAG_MAKS_SETNINGER; i++) {
+  for (var i = 0; i < o.setninger.length && ut.length < gr.setninger; i++) {
     var x = o.setninger[i] || {};
     var t = typeof x.tekst === 'string' ? opoint_kj_fjernMetasprak(opoint_kj_fjernSaksref(x.tekst.replace(/\s+/g, ' ').trim())) : '';
     var n = Number(x.sak);
     var kilde = inndata.filter(function (y) { return y.nr === n; })[0];
     if (!t || !kilde) continue;
     var w = t.split(' ').length;
-    if (ord + w > OPOINT_KJ_SAMMENDRAG_MAKS_ORD) break;
+    if (ord + w > gr.ord) break;
     ord += w;
     ut.push({ tekst: t, nr: n, url: kilde.url, sak: kilde.sak, kilde: kilde.kilde || '' });
   }
@@ -2510,13 +2572,14 @@ function opoint_kj_lagSammendrag(saker, tjeneste) {
   var inndata = opoint_kj_sammendragInndata(saker);
   var ut = { inndata: inndata, setninger: [], melding: '', reddet: 0 };
   if (!inndata.length) { ut.melding = 'Ingen middels-saker – ingen seksjon.'; return ut; }
-  var tekst = inndata.map(function (x) { return x.nr + '. ' + x.tittel + (x.ingress ? ' || ' + x.ingress : ''); }).join('\n');
-  var sv = tjeneste.sporMange([{ type: 'samm', system: OPOINT_KJ_SAMMENDRAG_SYSTEM, tekst: tekst, maxTokens: OPOINT_KJ_SAMMENDRAG_MAX_TOKENS }])[0];
-  var t = sv.ok ? opoint_kj_tolkSammendrag(sv.tekst, inndata) : null;
+  var gr = opoint_kj_sammendragGrenser(inndata.length), sys = opoint_kj_sammendragSystem(gr);
+  var tekst = inndata.map(function (x) { return x.nr + '. ' + (x.norsk ? '[NORSK] ' : '') + (x.viktig ? '[VIKTIG] ' : '') + x.tittel + (x.ingress ? ' || ' + x.ingress : ''); }).join('\n');
+  var sv = tjeneste.sporMange([{ type: 'samm', system: sys, tekst: tekst, maxTokens: gr.tokens }])[0];
+  var t = sv.ok ? opoint_kj_tolkSammendrag(sv.tekst, inndata, gr) : null;
   if (sv.ok && !t) {
     tjeneste.loggParseFeil('sammendrag', sv, 1);
-    sv = tjeneste.sporMange([{ type: 'samm2', system: OPOINT_KJ_SAMMENDRAG_SYSTEM, tekst: tekst, maxTokens: 2 * OPOINT_KJ_SAMMENDRAG_MAX_TOKENS }])[0];
-    t = sv.ok ? opoint_kj_tolkSammendrag(sv.tekst, inndata) : null;
+    sv = tjeneste.sporMange([{ type: 'samm2', system: sys, tekst: tekst, maxTokens: 2 * gr.tokens }])[0];
+    t = sv.ok ? opoint_kj_tolkSammendrag(sv.tekst, inndata, gr) : null;
     if (sv.ok && !t) tjeneste.loggParseFeil('sammendrag', sv, 2);
     if (t) ut.reddet = 1;
   }
@@ -2912,6 +2975,13 @@ function opoint_kj_validerHtml(html) {
   var synlig = h.replace(/<[^>]*>/g, ' ');
   if (/style\s*=|font-size\s*:|line-height\s*:|border-left\s*:/i.test(synlig)) feil.push('«style=»/CSS i synlig tekst');
   return feil;
+}
+
+/** D 6e: kort feilmelding (ren tekst) KUN til TEST_EPOST. */
+function opoint_kj_sendFeilmelding(emne, tekst) {
+  var til = PropertiesService.getScriptProperties().getProperty('TEST_EPOST');
+  if (!til || !String(til).trim()) throw new Error('Script Property TEST_EPOST mangler');
+  GmailApp.sendEmail(String(til).trim(), emne, tekst);
 }
 
 /** Lagrer HTML i Drive og sender til TEST_EPOST (Script Property). Returnerer {driveUrl, melding}. */
@@ -4667,11 +4737,12 @@ var OPOINT_KJ_RECALL_FASIT = {
   '20': { start: '2026-11-19 07:30', slutt: '2026-11-20 07:30', saker: [
     { kilde: 'Routine', navn: 'Splash247: Will shipping get its solar moment?', domene: 'splash247.com', ord: [['solar moment']] },
     { kilde: 'Routine', navn: 'Econowind turns ten (il nautilus)', domene: 'ilnautilus.it', ord: ['econowind'] },
-    { kilde: 'Routine', navn: 'WorldCargo News: Port of Bilbao OPS', domene: 'worldcargonews.com', ord: [['bilbao', 'shore'], ['bilbao', 'ops'], ['bilbao', 'power']] },
-    { kilde: 'Routine', navn: 'Baird Maritime: Illinois begins electric ferry procurement', domene: 'bairdmaritime.com', ord: [['illinois', 'ferr']] },
+    { kilde: 'Routine', navn: 'WorldCargo News: Port of Bilbao OPS', domene: 'worldcargonews.com', ord: [['port of bilbao'], ['bilbao', 'ops network']] },
+    { kilde: 'Routine', navn: 'Baird Maritime: Illinois begins electric ferry procurement', domene: 'bairdmaritime.com', ord: [['illinois begins electric ferry'], ['illinois', 'ferry procurement']] },
     { kilde: 'Routine', navn: 'Smart Maritime Network: Qingdao electric remote-controlled container ship', domene: 'smartmaritimenetwork.com', ord: [['qingdao', 'ship'], ['qingdao', 'container'], ['qingdao', 'electric']] },
-    { kilde: 'Routine', navn: 'Offshore Energy: methanol-ready OESV launches in China (Sea1 Citrine)', domene: 'offshore-energy.biz', ord: [['citrine'], ['methanol-ready', 'offshore energy support']] },
+    { kilde: 'Routine', navn: 'Offshore Energy: methanol-ready OESV launches in China (Sea1 Citrine)', domene: 'offshore-energy.biz', ord: [['another methanol-ready offshore energy support vessel'], ['citrine']] },
     { kilde: 'Routine', navn: 'Offshore Energy: Purus takes delivery of methanol-ready Damen CSOV', domene: 'offshore-energy.biz', ord: ['purus'] },
+    { kilde: 'Routine', navn: 'Lauritzen Brave Bulker', domene: '', ord: [['brave bulker'], ['lauritzen', 'methanol']] },
     { kilde: 'Routine', navn: 'IMO NZF: ni organisasjoners uttalelse (Cyprus Shipping News)', domene: 'cyprusshippingnews.com', ord: ['net-zero'], kunDomene: true }
   ] },
   '18': { start: '2026-11-17 07:30', slutt: '2026-11-18 07:30', saker: [
