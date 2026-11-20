@@ -18,7 +18,7 @@ const fmt = s => new Date(s * 1000).toISOString().replace('T', ' ').slice(0, 16)
 const kodeF = fs.readFileSync(__dirname + '/../../FellesTest.gs', 'utf8');
 const kodeO = fs.readFileSync(__dirname + '/../../OpointKjoring.gs', 'utf8');
 assert.strictEqual((kodeF.match(/newTrigger\(/g) || []).length, 1); assert.ok(/newTrigger\(FELLES_TRIGGER_FUNKSJON\)\.timeBased\(\)\.at\(tid\)/.test(kodeF));
-assert.ok(!/newTrigger\(/.test(kodeO)); assert.ok(!/GmailApp|MailApp|hentMottakere|FANE_MOTTAKERE/.test(kodeF));
+assert.ok(!/newTrigger\(/.test(kodeO)); assert.ok(!/sendEmail|\.send\(|createDraft|hentMottakere|FANE_MOTTAKERE/.test(kodeF)); // Gmail bare lest (search) og kvote sjekket
 assert.ok(!/oppdaterKildeStatus\(|\bloggKjoring\(/.test(kodeF)); // skriver ikke til Kilder/Kjøringslogg
 
 // --- A6: STORE BOKSTAVER ---
