@@ -904,13 +904,13 @@ console.log('Del 1-tester OK');
   assert.ok(ep.html.includes('Ellers i bransjen') && ep.html.includes('<a href="https://m.no/3"'));
   // A1: Opoint-irrelevante vises ikke under «Mulig irrelevant», men telles
   assert.ok(!ep.html.includes('Mulig irrelevant</div>') && !ep.html.includes('Ikke maritimt'));
-  assert.ok(ep.html.includes('1 vurdert som irrelevante (arkfanen).'));
-  assert.ok(ep.html.includes('4 øvrige treff (lav prioritet) i arkfanen.')); assert.ok(ep.html.includes('Ingen nye norskspråklige treff.')); assert.ok(ep.html.includes('<strong>Kun test</strong>')); assert.ok(ep.tekst.includes('== Kun test =='));
+  assert.ok(!/arkfane/i.test(ep.html) && !/arkfane/i.test(ep.tekst)); // Felles DEL 4: ingen henvisning til arket
+  assert.ok(!ep.html.includes('Kun test')); const epT = f.opoint_kj_byggEpost(s3, sm, vindu, String, true, st, [{ navn: 'q1', feil: '' }], { visTestinfo: true }); assert.ok(epT.html.includes('<strong>Kun test</strong>') && epT.html.includes('4 øvrige treff med lav prioritet.') && epT.html.includes('Ingen nye norskspråklige treff.'));
   assert.ok(ep.html.includes('Denne e-posten sendes automatisk')); // originalens bunntekst
   assert.ok(ep.html.includes('Apps Script: ikke kjørt · Opoint: OK (2 søk')); // A3
   assert.ok(!ep.html.includes('Sak 4')); // oppfølging er ikke med
   assert.strictEqual(ep.antallHoy, 2); assert.ok(!ep.html.includes('Sak 9')); // lav vises ikke
-  assert.ok(ep.tekst.includes('== Ellers i bransjen ==') && ep.tekst.includes('4 øvrige treff (lav prioritet) i arkfanen.'));
+  assert.ok(ep.tekst.includes('== Ellers i bransjen =='));
   const ep2 = f.opoint_kj_byggEpost(s3.slice(0, 2), { setninger: [], inndata: [] }, vindu, String, false, { ingenNorske: false }, []);
   assert.ok(!ep2.html.includes('Ellers i bransjen') && !ep2.html.includes('øvrige treff') && !ep2.html.includes('norskspråklige'));
 
@@ -1041,7 +1041,7 @@ console.log('DEL 1 KI-feil OK');
   assert.strictEqual(om.ki, 1); assert.ok(saker[1].omtaltTidligere.startsWith('KI:')); assert.strictEqual(saker[0].omtaltTidligere, undefined);
   assert.ok(tj.kallListe[0].messages[0].content.includes('TIDLIGERE:\nT1 NYK bestiller'));
   // Rettelse 1: samme hendelse uten ny informasjon → Oppfølging (ikke i e-posten)
-  assert.strictEqual(saker[1].oppfolging, true); assert.ok(saker[1].oppfolgingGrunn.startsWith('Sendt før (KI'));
+  assert.strictEqual(saker[1].oppfolging, true); assert.ok(/^Sendt før .*\(KI/.test(saker[1].oppfolgingGrunn));
   saker[1].oppfolging = false; saker[1].oppfolgingGrunn = '';
   // … med ny informasjon → «Oppdatering» (vises)
   const tjO = lagTj(() => '{"treff": [{"ny": 1, "tidligere": "T1", "nytt": "Skipet har fått navnet Izanami"}]}');
@@ -1081,7 +1081,7 @@ console.log('DEL 1 KI-feil OK');
   const sa = f.opoint_kj_lagSaker(ka, null);
   sa[1].kiResultat = { relevant: true, prioritet: 'høy' }; sa[2].kiResultat = { relevant: true, prioritet: 'høy', prioritetGrunn: 'NZF' };
   const rr = f.opoint_kj_byggRaderRapport({ kandidater: ka }, sa, d);
-  assert.ok(rr.some(r => r[1] === 'LowNoiser Forschungsprojekt' && r[4] !== 'Ekskludert: språk (de)')); // v2 DEL 2: egne prosjekter ekskluderes ikke på språk
+  assert.ok(rr.some(r => r[1] === 'LowNoiser Forschungsprojekt' && r[4] === 'Ekskludert: språk (de)')); // Felles DEL 2a: aldri eget kort på andre språk
   assert.ok(rr.some(r => r[1] === 'Advances in the EU LowNoiser project' && r[4] === 'I e-posten (høy)'));
   assert.ok(rr.some(r => r[0] === sa[2].id && r[1] === 'høy' && r[2] === 'NZF'));
 

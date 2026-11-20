@@ -115,7 +115,7 @@ assert.ok(fe.html.includes('Apps Script: 48 av 50 kilder hentet OK. 2 feilet: Ki
 assert.ok(fe.html.includes('Google Alerts [AS+OP]') && fe.html.includes('E24 [AS+OP]') && fe.html.includes('MC [AS]'));
 assert.ok(fe.html.includes('Om oss')); // Nevner oss → Om oss
 assert.ok(fe.html.includes('Mulig irrelevant</div>') && fe.html.includes('Ikke prosjektet GASS')); // A1: AS-irrelevant vises
-assert.ok(fe.html.includes('Sammendrag utelatt (tid)'));
+assert.ok(!fe.html.includes('Sammendrag utelatt (tid)')); // Felles DEL 4a: ingen testinfo i e-posten
 assert.ok(fe.html.includes('hvorav <strong') && fe.html.includes('>1</strong> under «Mulig irrelevant»')); // tellingen stemmer
 assert.deepStrictEqual(J(fe.kort.map(x => x.opphav).sort()), ['AS', 'AS', 'AS+OP', 'AS+OP']);
 // Opoint feilet: Apps Script alene

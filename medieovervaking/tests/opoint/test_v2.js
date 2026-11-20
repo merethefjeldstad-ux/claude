@@ -61,15 +61,23 @@ f.opoint_kj_vurderSaker(sk, { sokeord: [] }, lagTj(() => '{"saker": []}'), 0, vi
 const as = { treff: asT, kategori: {}, ok: 47, totalt: 50, feilet: [], hoppet: 0 };
 const op = { ok: true, forb: { kandidater: kk, resultater: [{}], klient: {}, oppsett: { merknader: [] } }, saker: sk, ki: { kall: 0 }, sm: null };
 const fe = f.opoint_ft_byggFellesEpost(as, op, vindu, { fmtSek: fmt }, []);
-assert.strictEqual(fe.kort.length, 3);
-assert.ok(fe.html.includes('TankerLink: Shore Power For Tankers') && fe.html.includes('Postschiff nimmt') && fe.html.includes('Gemini 4 Hydrogen'));
+assert.strictEqual(fe.kort.length, 2); // Felles DEL 2a: Postschiff (tysk) får ikke eget kort
+assert.ok(fe.html.includes('TankerLink: Shore Power For Tankers') && !fe.html.includes('Postschiff nimmt') && fe.html.includes('Gemini 4 Hydrogen'));
+assert.ok(fe.html.includes('Mulig irrelevant</div>')); // 2c
+op.fremmed = f.opoint_ft_fordelFremmedspraak(op, fe.kort, null, asT);
+assert.strictEqual(op.fremmed.omOss.length, 1); assert.strictEqual(op.fremmed.omOss[0].navn, 'nordisch.info (de)');
+const feF = f.opoint_ft_byggFellesEpost(as, op, vindu, { fmtSek: fmt }, []);
+assert.ok(/Også omtalt på tysk: <a href="https:\/\/www\.nordisch\.info\/postschiff"[^>]*>nordisch\.info \(de\)<\/a>/.test(feF.html));
+assert.ok(feF.tekst.includes('Også omtalt på tysk: nordisch.info (de) https://www.nordisch.info/postschiff'));
+delete op.fremmed;
 console.log('DEL 2 OK');
 
 // ---- DEL 4: «Kun test»-boks og arkivlenke ----
 const s4 = f.opoint_kj_lagSaker(f.opoint_kj_dedup([{ strom: 'B', navn: 'B', searchterm: 'b', dokumenter: [doc({ id_article: 40, orig_url: 'https://a.com/1' }), doc({ id_article: 41, orig_url: 'https://b.com/1' })] }], []), null);
 s4[0].kiResultat = { relevant: true, prioritet: 'lav' }; s4[1].kiResultat = { relevant: false };
 const e4 = f.opoint_kj_byggEpost(s4, null, vindu, fmt, false, {}, [], { visTestinfo: true });
-assert.ok(e4.html.includes('<strong>Kun test</strong><br>1 øvrige treff (lav prioritet) i arkfanen.<br>1 vurdert som irrelevante (arkfanen).'));
+assert.ok(e4.html.includes('<strong>Kun test</strong><br>1 øvrige treff med lav prioritet.<br>1 Opoint-treff vurdert som irrelevante.'));
+assert.ok(!f.opoint_kj_byggEpost(s4, null, vindu, fmt, false, {}, [], {}).html.includes('Kun test')); // standard: av
 assert.ok(e4.html.indexOf('Kun test') > e4.html.indexOf('Spørsmål? Ta kontakt')); // nederst, under bunnteksten
 const e4b = f.opoint_kj_byggEpost(s4, null, vindu, fmt, false, {}, [], { visTestinfo: false, arkivUrl: 'https://arkiv.example/x' });
 assert.ok(!e4b.html.includes('arkfanen') && !e4b.tekst.includes('arkfanen')); assert.ok(e4b.html.includes('Se alle treff i arkivet'));

@@ -31,7 +31,7 @@ var FELLES_SAMMENDRAG_FRIST_MS = 4.5 * 60 * 1000; // DEL C: etter 4,5 min hoppes
 var FELLES_SISTE_KI_FRIST_MS = 5.25 * 60 * 1000;  // ingen nye KI-kall etter dette
 var FELLES_TRIGGER_TID = '2026-11-20 07:35';      // DEL F
 var FELLES_TRIGGER_FUNKSJON = 'opoint_ft_triggerKjor';
-var VIS_TESTINFO = true;               // v2 DEL 4: grå «Kun test»-boks nederst med tall som bare finnes i arkfanen
+var VIS_TESTINFO = false;              // Felles DEL 4a: av – tallene står i fanen «Felles-test» og i rapporten
 var ARKIV_URL = '';                    // v2 DEL 4: satt → lenken «Se alle treff i arkivet» i e-posten (arkivet er ikke bygget)
 var KONTROLL_AKTIV = true;             // v2 DEL 3: kontroll-lesing før sending
 var KONTROLL_FANE = 'Kontroll-lesing';
@@ -46,25 +46,54 @@ function kjorFellesTest(startTekst, sluttTekst) {
   var t0 = Date.now();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var d = opoint_t3_datoFunksjoner();
+  var parse = function (x) { return Utilities.parseDate(x, 'Europe/Oslo', 'yyyy-MM-dd HH:mm'); };
+  var st0 = typeof startTekst === 'string' ? startTekst : FELLES_START, sl0 = typeof sluttTekst === 'string' ? sluttTekst : FELLES_SLUTT;
+  var vindu = opoint_ft_vindu(st0, sl0, t0, parse);
+  // v2 DEL 2: et oppgitt vindu er alltid en ny kjøring (historisk), også kort etter vindusslutt.
+  var historisk = opoint_ft_erHistorisk(st0, sl0, vindu, t0);
+  // Felles DEL 2/5: ved ny kjøring brukes Apps Script-treffene som faktisk ble sendt den dagen (Sendte artikler +
+  // Artikkellogg + den sendte e-posten) – RSS-kildene viser ikke lenger det som lå der da. Finnes ingen, hentes kildene.
+  var dag = Utilities.formatDate(new Date(vindu.newest * 1000), 'Europe/Oslo', 'yyyy-MM-dd');
+  var res = opoint_ft_kjorKjerne({
+    ss: ss, d: d, t0: t0, vindu: vindu, historisk: historisk, fane: FELLES_FANE, filprefiks: 'Felles-test',
+    emne: '[Felles-test] Medieovervåking ' + d.fmtSek(vindu.oldest) + ' – ' + d.fmtSek(vindu.newest),
+    hentAs: function (fase) {
+      if (historisk) {
+        var fra = opoint_ft_asFraSendte(ss, dag, vindu, d);
+        if (fra.sendteAntall > 0 || fra.epostFunnet) return fra;
+      }
+      var as = opoint_ft_hentAppsScript(ss, vindu, historisk, t0);
+      fase('Apps Script KI', function () {
+        try { as.aiStat = vurderTreffMedAI(as.treff); } catch (e) { as.merknader.push('Apps Script KI feilet: ' + e.message); }
+      });
+      return as;
+    },
+    loggSendte: !historisk && LOGG_SENDTE ? { merknad: 'ekte', tid: null, produksjon: true } : null,
+    tilArtiklerMs: historisk ? vindu.oldest * 1000 : vindu.newest * 1000
+  });
+  Logger.log('kjorFellesTest ferdig på ' + Math.round(res.total / 1000) + ' s. ' + res.send.melding);
+  return res;
+}
+
+/**
+ * Felles kjerne for kjorFellesTest og backfill. spec: {ss, d, t0, vindu, historisk, fane, filprefiks, emne,
+ * hentAs(fase) → as, loggSendte: {merknad, tid (Date|null = nå), produksjon (Sendte artikler/Artikkellogg)} | null,
+ * tilArtiklerMs}. Apps Script og Opoint er hver for seg i try/catch; e-posten sendes uansett.
+ */
+function opoint_ft_kjorKjerne(spec) {
+  var ss = spec.ss, d = spec.d, t0 = spec.t0, vindu = spec.vindu, historisk = spec.historisk;
   var faser = {}, merknader = [];
   var fase = function (navn, fn) { var s0 = Date.now(); try { return fn(); } finally { faser[navn] = (faser[navn] || 0) + (Date.now() - s0); } };
-  var parse = function (s) { return Utilities.parseDate(s, 'Europe/Oslo', 'yyyy-MM-dd HH:mm'); };
-  var vindu = opoint_ft_vindu(typeof startTekst === 'string' ? startTekst : FELLES_START,
-    typeof sluttTekst === 'string' ? sluttTekst : FELLES_SLUTT, t0, parse);
-  // v2 DEL 2: et vindu som er oppgitt eksplisitt (f.eks. opoint_ft_kjor1920) er alltid en ny kjøring av et gammelt
-  // vindu, også om det skjer kort etter vindusslutt. Før ble v2 (kjørt 09:02, 1,5 t etter 07:30) regnet som «ekte»:
-  // Apps Script-treffene ble da deduplisert mot «Sendte artikler», der 07:38-kjøringen allerede hadde lagt dem → 0 treff.
-  var historisk = opoint_ft_erHistorisk(typeof startTekst === 'string' ? startTekst : FELLES_START,
-    typeof sluttTekst === 'string' ? sluttTekst : FELLES_SLUTT, vindu, t0);
-  Logger.log('kjorFellesTest: vindu ' + d.fmtSek(vindu.oldest) + ' – ' + d.fmtSek(vindu.newest) + (historisk ? ' (historisk/ny kjøring – logger ikke)' : ''));
+  Logger.log('Felles-kjøring: vindu ' + d.fmtSek(vindu.oldest) + ' – ' + d.fmtSek(vindu.newest) + (historisk ? ' (historisk/ny kjøring)' : ''));
 
-  // 1) Apps Script-kildene (som originalen)
-  var as = fase('Apps Script-henting', function () { return opoint_ft_hentAppsScript(ss, vindu, historisk, t0); });
-  merknader = merknader.concat(as.merknader);
-  fase('Apps Script KI', function () {
-    try { as.aiStat = vurderTreffMedAI(as.treff); }
-    catch (e) { merknader.push('Apps Script KI feilet: ' + e.message); }
-  });
+  // 1) Apps Script (feil stopper aldri Opoint eller e-posten)
+  var as;
+  try { as = fase('Apps Script-henting', function () { return spec.hentAs(fase); }); }
+  catch (e) {
+    as = { treff: [], kategori: {}, ok: 0, totalt: 0, feilet: [], hoppet: 0, merknader: ['Apps Script feilet: ' + e.message] };
+    opoint_ft_loggOpointFeil(ss, 'Apps Script feilet (fellesløpet): ' + e.message);
+  }
+  merknader = merknader.concat(as.merknader || []);
 
   // 2) Opoint (feil eller tidsavbrudd stopper aldri e-posten)
   var op = { ok: false, feil: '', forb: null, saker: [], ki: opoint_kj_tomKi(), sm: null, imo: null, tjeneste: null };
@@ -80,12 +109,8 @@ function kjorFellesTest(startTekst, sluttTekst) {
     op.saker = opoint_kj_lagSaker(op.forb.kandidater, grupper);
     opoint_ft_merkSaker(op.saker);
     opoint_kj_settOppfolging(op.saker, vindu);
-    // Fellesløpet: Apps Script-treffene står i SAMME e-post, så «Også i dagens e-post» gir ikke mening
-    // (og ved ny kjøring traff den dagens tidligere utsending). Settes ikke.
-    op.saker.forEach(function (s) { s.iDagensEpost = false; });
-    // Rettelse 1: til vindusslutt (ikke -start), ellers faller gårsdagens utsending (07:3x) og simulerte rader
-    // (datert vindusslutt) utenfor. Rader fra en kjøring etter vindusslutt (f.eks. dagens) tas ikke med.
-    var sendte7 = opoint_kj_lesSendte(ss, (vindu.oldest - OPOINT_KJ_OMTALT_DAGER * 86400) * 1000, vindu.newest * 1000);
+    op.saker.forEach(function (s) { s.iDagensEpost = false; });   // AS står i SAMME e-post
+    var sendte7 = opoint_kj_lesSendte(ss, (vindu.oldest - OPOINT_KJ_OMTALT_DAGER * 86400) * 1000, vindu.newest * 1000, spec.tilArtiklerMs);
     op.antallSendte = sendte7.length;
     op.omtalt = fase('Omtalt tidligere', function () { return opoint_kj_settOmtaltTidligere(op.saker, sendte7, op.tjeneste); });
     op.ki = fase('Relevans/prioritet', function () { return opoint_kj_vurderSaker(op.saker, op.forb.oppsett, op.tjeneste, 1, vindu); });
@@ -110,14 +135,22 @@ function kjorFellesTest(startTekst, sluttTekst) {
   try { if (op.tjeneste) opoint_kj_skrivKiFeil(ss, op.tjeneste); } catch (e) { /* bare logg */ }
   if (!op.ok) opoint_ft_loggOpointFeil(ss, op.feil);
 
-  // 3) E-post: bygg → kontroll-lesing (v2 DEL 3) → send. Ingen av delene kan hindre sendingen.
+  // 3) E-post: bygg → andre språk (DEL 2a) → kontroll-lesing (DEL 3) → send. Ingen av delene kan hindre sendingen.
   var epost = null, send = { driveUrl: '', melding: '' };
   try { epost = opoint_ft_byggFellesEpost(as, op, vindu, d, merknader); } catch (e) { send.melding = 'E-post kunne ikke bygges: ' + e.message; }
-  if (epost && KONTROLL_AKTIV) {
-    fase('Kontroll-lesing', function () {
-      var feilFor = op.tjeneste ? op.tjeneste.kiFeil.length : 0;
+  var feilFor = op.tjeneste ? op.tjeneste.kiFeil.length : 0;
+  if (epost) {
+    fase('Andre språk', function () {
       try {
         if (op.tjeneste) op.tjeneste.settFrist(t0 + FELLES_SISTE_KI_FRIST_MS + 45000);
+        op.fremmed = opoint_ft_fordelFremmedspraak(op, epost.kort, op.tjeneste, as.treff);
+        if (op.fremmed.antall) epost = opoint_ft_byggFellesEpost(as, op, vindu, d, merknader);
+      } catch (e) { merknader.push('Andre språk feilet: ' + e.message); op.fremmed = null; }
+    });
+  }
+  if (epost && KONTROLL_AKTIV) {
+    fase('Kontroll-lesing', function () {
+      try {
         op.kontroll = opoint_ft_kontrollLes({ epost: epost, saker: op.saker, sm: op.sm, tjeneste: op.tjeneste, vindu: vindu, d: d });
         if (op.kontroll.endret) {
           try { epost = opoint_ft_byggFellesEpost(as, op, vindu, d, merknader, op.kontroll.overstyr); }
@@ -125,30 +158,27 @@ function kjorFellesTest(startTekst, sluttTekst) {
         }
       } catch (e) { op.kontroll = { logg: [], melding: 'Kontroll-lesing feilet: ' + e.message + ' – sendt uten kontroll.' }; }
       try { opoint_ft_loggKontroll(ss, op.kontroll, vindu, d); } catch (e) { Logger.log('Kontroll-lesing-fanen: ' + e.message); }
-      try { if (op.tjeneste && op.tjeneste.kiFeil.length > feilFor) opoint_kj_skrivKiFeil(ss, { kiFeil: op.tjeneste.kiFeil.slice(feilFor) }); } catch (e) { /* bare logg */ }
-      if (op.tjeneste) { op.ki.kall = op.tjeneste.kall; op.ki.kostnad = op.tjeneste.kostnad; }
     });
   }
+  try { if (op.tjeneste && op.tjeneste.kiFeil.length > feilFor) opoint_kj_skrivKiFeil(ss, { kiFeil: op.tjeneste.kiFeil.slice(feilFor) }); } catch (e) { /* bare logg */ }
+  if (op.tjeneste) { op.ki.kall = op.tjeneste.kall; op.ki.kostnad = op.tjeneste.kostnad; }
   fase('Sending', function () {
     if (!epost) return;
-    try {
-      send = opoint_kj_lagreOgSend(epost, vindu, d.fmtSek, '[Felles-test] Medieovervåking ' + d.fmtSek(vindu.oldest) + ' – ' + d.fmtSek(vindu.newest), 'Felles-test');
-    } catch (e) {
-      send.melding = 'E-post feilet: ' + e.message;
-    }
+    try { send = opoint_kj_lagreOgSend(epost, vindu, d.fmtSek, spec.emne, spec.filprefiks); }
+    catch (e) { send.melding = 'E-post feilet: ' + e.message; opoint_ft_loggOpointFeil(ss, 'E-post feilet: ' + e.message); }
   });
 
-  // 4) Logging av sendte saker (bare ekte kjøringer)
+  // 4) Logging av sendte kort (ekte kjøring eller backfill)
   var logget = '';
-  if (!historisk && LOGG_SENDTE && epost && /Sendt/.test(send.melding)) {
+  if (spec.loggSendte && epost && /Sendt/.test(send.melding)) {
     try {
-      opoint_ft_loggSendteSaker(ss, opoint_ft_sendteRader(epost, op.saker, new Date(), 'ekte', { setninger: epost.setningerVist || [] }));
-      if (as.treff.length) { leggTilSendteUrler(ss, as.treff); loggArtikler(ss, as.treff); }
-      logget = 'Sendte saker logget.';
-    } catch (e) { logget = 'Logging av sendte saker feilet: ' + e.message; }
+      opoint_ft_loggSendteSaker(ss, opoint_ft_sendteRader(epost, op.saker, spec.loggSendte.tid || new Date(), spec.loggSendte.merknad, { setninger: epost.setningerVist || [] }));
+      if (spec.loggSendte.produksjon && as.treff.length) { leggTilSendteUrler(ss, as.treff); loggArtikler(ss, as.treff); }
+      logget = 'Sendte kort logget i «' + OPOINT_FANE_SENDTE_SAKER + '» (' + spec.loggSendte.merknad + ').';
+    } catch (e) { logget = 'Logging av sendte kort feilet: ' + e.message; }
   }
 
-  // 4b) Recall mot fasit (bare når vinduet har en fasit i OPOINT_KJ_RECALL_FASIT; etter sendingen, så den aldri hindrer e-posten)
+  // 4b) Recall mot fasit (etter sendingen, så den aldri hindrer e-posten)
   op.recall = null;
   var fasitId = opoint_ft_fasitFor(vindu, d);
   if (fasitId && op.ok && Date.now() - t0 < FELLES_RECALL_FRIST_MS) {
@@ -161,12 +191,12 @@ function kjorFellesTest(startTekst, sluttTekst) {
     });
   }
 
-  // 5) Fanen «Felles-test»
+  // 5) Fanen
   var total = Date.now() - t0;
   try {
-    opoint_t3_skrivFane(ss, FELLES_FANE, opoint_ft_byggRader(as, op, epost, send, vindu, d, faser, total, merknader.concat(logget ? [logget] : []), historisk), apiKey);
-  } catch (e) { Logger.log('Felles-test-fanen: ' + e.message); }
-  Logger.log('kjorFellesTest ferdig på ' + Math.round(total / 1000) + ' s. ' + send.melding);
+    opoint_t3_skrivFane(ss, spec.fane, opoint_ft_byggRader(as, op, epost, send, vindu, d, faser, total, merknader.concat(logget ? [logget] : []), historisk), apiKey);
+  } catch (e) { Logger.log('Fanen ' + spec.fane + ': ' + e.message); }
+  return { as: as, op: op, epost: epost, send: send, faser: faser, total: total, merknader: merknader, logget: logget };
 }
 
 /** v2 DEL 2: ny kjøring av et oppgitt vindu (eller vindu som sluttet for over 2 t siden) = historisk: AS på artikkeldato, ingen logging. */
@@ -250,6 +280,8 @@ function opoint_ft_kobleAS(kandidater, asTreff) {
     docs.concat(idd).forEach(function (doc) { var n = opoint_kj_normUrl(opoint_t3_artikkelUrl(doc)); if (n && urlKart[n] === undefined) urlKart[n] = i; });
   });
   (asTreff || []).forEach(function (t) {
+    // Felles DEL 2a: språk (AS-treff har ikke språkfelt; tittel + RSS-ingress + landsdomene)
+    if (t.sprak === undefined) t.sprak = opoint_kj_sprakFraTekst(t.tittel + ' ' + (t.ingress || ''), t.lenke);
     var n = opoint_kj_normUrl(t.lenke);
     if (n && urlKart[n] !== undefined) {
       var k = kandidater[urlKart[n]];
@@ -259,7 +291,7 @@ function opoint_ft_kobleAS(kandidater, asTreff) {
     }
     var vert = opoint_kj_normDomene(opoint_kj_normUrl(t.lenke));
     kandidater.push({ doc: { header: { text: t.tittel }, summary: { text: t.ingress || '' }, orig_url: t.lenke, url_common: vert,
-        unix_timestamp: t.dato ? Math.floor(t.dato.getTime() / 1000) : undefined, language: { text: '' } },
+        unix_timestamp: t.dato ? Math.floor(t.dato.getTime() / 1000) : undefined, language: { text: t.sprak || '' } }, asSprak: t.sprak || '',
       normUrl: n, domene: vert, strommer: ['AS'], sporringer: ['Apps Script: ' + t.kilde], antallTreff: 1, ekskludert: false,
       ekskluderGrunn: '', sak: '', appsStatus: '', appsArsak: '', soketerm: [], fastRelevant: false, fastNavn: [], niva: 1,
       apen: 'ukjent', nivaGrunnlag: 'Apps Script-kilde', slattSammen: [], erAS: true, asTreffListe: [t] });
@@ -272,11 +304,81 @@ function opoint_ft_merkSaker(saker) {
     var liste = [];
     sak.medlemmer.forEach(function (m) { (m.asTreffListe || []).forEach(function (t) { liste.push(t); }); });
     sak.harOp = sak.medlemmer.some(function (m) { return !m.erAS; });
-    if (!liste.length) return;
+    // Felles DEL 2a: AS-treff på andre språk får aldri eget kort (vises som «Andre kilder» / «Også omtalt på …»)
+    sak.asFremmed = liste.filter(function (t) { return t.sprak; });
+    liste = liste.filter(function (t) { return !t.sprak; });
+    if (!liste.length || sak.sprakEkskludert) return;
     liste.sort(function (a, b) { return (b.aiNevnerOss ? 1 : 0) - (a.aiNevnerOss ? 1 : 0); });
     sak.asTreff = liste[0];
     sak.asTreffAlle = liste;
   });
+}
+
+/**
+ * Felles DEL 2a: artikler på andre språk enn no/nb/nn/sv/da/en. (1) AS-treff på andre språk i en sak som får kort →
+ * «Også omtalt» på det kortet. (2) Språkekskluderte saker med egne navn/prosjekter eller Apps Script-treff → KI
+ * tilordner til nærmeste kort (bare samme prosjekt, aktør eller tema); ellers «Også omtalt på <språk>» under «Om oss».
+ * Returnerer {perKort: {K1: [{navn, url}]}, omOss: [{navn, url, sprak}], antall, logg: [...]}.
+ */
+var FREMMED_SYSTEM =
+  'Du får artikler på andre språk (A1, A2 …) og kortene i en norsk medieovervåking for Maritime CleanTech (K1, K2 …). ' +
+  'Tilordne hver artikkel til kortet den passer best til, men BARE hvis artikkelen handler om samme prosjekt, aktør eller ' +
+  'tema som kortet. Ellers "kort": null. Du skal ikke skrive noe innhold.\n\nSvar KUN med JSON, uten kodeblokk: ' +
+  '{"tilordning": [{"artikkel": "A1", "kort": "K3"}, {"artikkel": "A2", "kort": null}]}';
+
+function opoint_ft_fordelFremmedspraak(op, kort, tjeneste, asTreff) {
+  var ut = { perKort: {}, omOss: [], antall: 0, logg: [] };
+  var kortForSak = {};
+  kort.forEach(function (k) { String(k.sak || '').split(', ').forEach(function (id) { if (id && !kortForSak[id]) kortForSak[id] = k; }); });
+  var item = function (tittel, url, sp, kilde) {
+    var dom = opoint_kj_normDomene(opoint_kj_normUrl(url)) || kilde || '?';
+    return { tittel: tittel, url: url, sprak: sp, navn: dom + ' (' + sp + ')', kilde: kilde || dom };
+  };
+  var ledige = [];
+  (op.saker || []).forEach(function (s) {
+    var liste = (s.asFremmed || []).map(function (t) { return item(t.tittel, t.lenke, t.sprak, t.kilde); });
+    if (s.sprakEkskludert && s.egen && s.harOp) {
+      var dv = opoint_kj_visDoc(s);
+      liste.push(item(opointTekstFelt(dv.header), opoint_t3_artikkelUrl(dv), s.sprakEkskludert, s.representant.domene));
+    }
+    if (!liste.length) return;
+    var k = kortForSak[s.id];
+    if (k) { ut.perKort[k.id] = (ut.perKort[k.id] || []).concat(liste); liste.forEach(function (x) { ut.logg.push([x.tittel, x.navn, 'Andre kilder på ' + k.id + ' (samme gruppe)']); }); }
+    else ledige = ledige.concat(liste);
+  });
+  // AS-treff på andre språk som ikke ligger i noen sak (f.eks. når Opoint feilet)
+  (asTreff || []).forEach(function (t) {
+    if (!t.sprak) return;
+    var iSak = (op.saker || []).some(function (s) { return (s.asFremmed || []).indexOf(t) >= 0; });
+    if (!iSak) ledige.push(item(t.tittel, t.lenke, t.sprak, t.kilde));
+  });
+  ut.antall = ledige.length + Object.keys(ut.perKort).reduce(function (a, k) { return a + ut.perKort[k].length; }, 0);
+  if (!ledige.length) return ut;
+  var kandKort = kort.filter(function (k) { return k.prioritet !== 'irrelevant'; });
+  var valg = {};
+  if (tjeneste && kandKort.length) {
+    var tekst = 'ARTIKLER:\n' + ledige.map(function (x, i) { return 'A' + (i + 1) + ' | ' + x.tittel + ' | ' + x.kilde; }).join('\n') +
+      '\n\nKORT:\n' + kandKort.map(function (k) { return k.id + ' | ' + k.kategori + ' | ' + k.tittel + ' | ' + opointKort(k.ingress || '', 200); }).join('\n');
+    var sv = tjeneste.spor('fremmed', FREMMED_SYSTEM, tekst, 100 + 40 * ledige.length);
+    var o = sv.ok ? opoint_kj_parseJson(sv.tekst) : null;
+    if (sv.ok && !(o && Array.isArray(o.tilordning))) { tjeneste.loggParseFeil('andre språk', sv, 1); o = null; }
+    (o ? o.tilordning : []).forEach(function (x) {
+      var n = Number(String(x && x.artikkel || '').replace(/^A/i, '')), kid = x && x.kort ? String(x.kort).toUpperCase() : '';
+      if (n >= 1 && n <= ledige.length && kandKort.some(function (k) { return k.id === kid; })) valg[n - 1] = kid;
+    });
+    if (!o) ut.logg.push(['', '', 'KI-tilordning feilet – regel brukt']);
+  }
+  ledige.forEach(function (x, i) {
+    var kid = valg[i];
+    if (!kid && !tjeneste) {   // regel: samme egne navn i tittelen
+      var navn = OUR_NAMES.map(function (n) { return typeof n === 'string' ? n : n.navn; }).filter(function (n) { return x.tittel.toLowerCase().indexOf(n.toLowerCase()) >= 0; });
+      var k0 = navn.length ? kandKort.filter(function (k) { return navn.some(function (n) { return (k.tittel + ' ' + k.ingress).toLowerCase().indexOf(n.toLowerCase()) >= 0; }); })[0] : null;
+      if (k0) kid = k0.id;
+    }
+    if (kid) { ut.perKort[kid] = (ut.perKort[kid] || []).concat([x]); ut.logg.push([x.tittel, x.navn, 'Andre kilder på ' + kid]); }
+    else { ut.omOss.push(x); ut.logg.push([x.tittel, x.navn, '«Også omtalt på ' + opoint_kj_sprakNavn(x.sprak) + '» under Om oss']); }
+  });
+  return ut;
 }
 
 /** Bygger den felles e-posten med originalens mal (via opoint_kj_byggEpost). */
@@ -289,10 +391,11 @@ function opoint_ft_byggFellesEpost(as, op, vindu, d, merknader, overstyr) {
       asListe.push({ treff: t, sak: sak, kategori: as.kategori[t.lenke] });
     });
   });
-  // Apps Script-treff som ikke ble koblet (f.eks. når Opoint feilet) vises alene
+  // Apps Script-treff som ikke ble koblet (f.eks. når Opoint feilet) vises alene – men aldri på andre språk (DEL 2a)
   as.treff.forEach(function (t) {
-    var iSak = (op.saker || []).some(function (s) { return (s.asTreffAlle || []).indexOf(t) >= 0; });
-    if (!iSak && !vist[t.lenke]) asListe.push({ treff: t, sak: null, kategori: as.kategori[t.lenke] });
+    if (t.sprak === undefined) t.sprak = opoint_kj_sprakFraTekst(t.tittel + ' ' + (t.ingress || ''), t.lenke);
+    var iSak = (op.saker || []).some(function (s) { return (s.asTreffAlle || []).indexOf(t) >= 0 || (s.asFremmed || []).indexOf(t) >= 0; });
+    if (!iSak && !vist[t.lenke] && !t.sprak) asListe.push({ treff: t, sak: null, kategori: as.kategori[t.lenke] });
   });
   var st = op.forb ? opoint_kj_statistikk(op.forb, op.saker, op.ki) : null;
   var headerAs = 'Apps Script: ' + as.ok + ' av ' + as.totalt + ' kilder hentet OK' +
@@ -304,6 +407,7 @@ function opoint_ft_byggFellesEpost(as, op, vindu, d, merknader, overstyr) {
   if (overstyr && overstyr.flagget) headerOp += ' · Kontroll-lesing: ' + overstyr.flagget + ' kort flagget';
   return opoint_kj_byggEpost(op.saker || [], op.sm, vindu, d.fmtSek, true, st, op.forb ? op.forb.resultater : [],
     { asTreff: asListe, visOpprinnelse: VIS_OPPRINNELSE, headerAs: headerAs, headerOp: headerOp, visTestinfo: VIS_TESTINFO, arkivUrl: ARKIV_URL,
+      fremmed: op.fremmed || null,
       kontroll: overstyr || null, ekstraLinjer: merknader.filter(function (m) { return /utelatt|avbrutt|feilet/.test(m); }) });
 }
 
@@ -373,7 +477,8 @@ function opoint_ft_raderAsTreff(as, op, kort) {
     var sak = (op.saker || []).filter(function (s) { return (s.asTreffAlle || []).indexOf(t) >= 0; })[0];
     var k = sak ? kortFor[sak.id] : kort.filter(function (x) { return x.url === t.lenke; })[0];
     var n = sak ? sak.medlemmer.length + sak.medlemmer.reduce(function (a, m) { return a + (m.slattSammen || []).length; }, 0) : 1;
-    var merk = !k ? 'INGEN KORT' : (sak && sak.asTreff !== t ? 'samme kort som et annet Apps Script-treff (samme hendelse)' : (k.url === t.lenke ? 'eget kort' : 'kortet viser saken'));
+    var fr = op.fremmed ? opoint_ft_fremmedPlass(op.fremmed, t.lenke) : '';
+    var merk = t.sprak ? 'språk (' + t.sprak + '): ' + (fr || 'ikke eget kort') : !k ? 'INGEN KORT' : (sak && sak.asTreff !== t ? 'samme kort som et annet Apps Script-treff (samme hendelse)' : (k.url === t.lenke ? 'eget kort' : 'kortet viser saken'));
     rader.push([t.tittel, t.kilde, (t.matchendeOrd || []).join(', '), t.lenke, sak ? sak.id : '(ingen sak)', n, k ? k.tittel : '', merk]);
   });
   if (op.egne && op.egne.detaljer && op.egne.detaljer.length) {
@@ -384,6 +489,14 @@ function opoint_ft_raderAsTreff(as, op, kort) {
     });
   }
   return rader;
+}
+
+/** Hvor en artikkel på andre språk havnet: «Andre kilder på K3» / «Også omtalt … under Om oss» / ''. */
+function opoint_ft_fremmedPlass(fremmed, url) {
+  var funnet = '';
+  Object.keys(fremmed.perKort || {}).forEach(function (kid) { if (fremmed.perKort[kid].some(function (x) { return x.url === url; })) funnet = 'Andre kilder på ' + kid; });
+  if (!funnet && (fremmed.omOss || []).some(function (x) { return x.url === url; })) funnet = '«Også omtalt» under Om oss';
+  return funnet;
 }
 
 /** Rettelse 4: hvordan representanten ble valgt for kort med flere artikler (nivå, Åpen, publisert). */

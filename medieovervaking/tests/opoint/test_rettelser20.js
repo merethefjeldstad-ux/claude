@@ -103,7 +103,7 @@ assert.strictEqual(epE.kort.length, 3);
 // Fanen: alle AS-treff med sak og kort
 const radAs = f.opoint_ft_raderAsTreff({ treff: asT }, { saker: sE, egne: de, forb: { kandidater: kE } }, epE.kort);
 assert.strictEqual(radAs.filter(r => asT.some(t => t.tittel === r[0])).length, 4);
-assert.ok(radAs.some(r => r[0].startsWith('Wie Forschung') && r[7].startsWith('samme kort')));
+assert.ok(radAs.some(r => r[0].startsWith('Wie Forschung') && r[7].startsWith('språk (de)'))); // Felles DEL 2a
 assert.ok(!radAs.some(r => r[7] === 'INGEN KORT'));
 // KI feiler → gruppen beholdes (merknad)
 const gr2 = { grupper: [[0, 1, 2, 3, 4]] };
