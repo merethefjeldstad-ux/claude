@@ -31,6 +31,12 @@ var FELLES_SAMMENDRAG_FRIST_MS = 4.5 * 60 * 1000; // DEL C: etter 4,5 min hoppes
 var FELLES_SISTE_KI_FRIST_MS = 5.25 * 60 * 1000;  // ingen nye KI-kall etter dette
 var FELLES_TRIGGER_TID = '2026-11-20 07:35';      // DEL F
 var FELLES_TRIGGER_FUNKSJON = 'opoint_ft_triggerKjor';
+var VIS_TESTINFO = true;               // v2 DEL 4: grå «Kun test»-boks nederst med tall som bare finnes i arkfanen
+var ARKIV_URL = '';                    // v2 DEL 4: satt → lenken «Se alle treff i arkivet» i e-posten (arkivet er ikke bygget)
+var KONTROLL_AKTIV = true;             // v2 DEL 3: kontroll-lesing før sending
+var KONTROLL_FANE = 'Kontroll-lesing';
+var KONTROLL_PER_KALL = 25;            // over 25 kort → to kall
+var KONTROLL_MAKS_FJERN = 2;           // maks kort kontroll-lesingen kan ta ut per e-post
 
 // =====================================================================
 // DEL B: kjorFellesTest
@@ -45,8 +51,12 @@ function kjorFellesTest(startTekst, sluttTekst) {
   var parse = function (s) { return Utilities.parseDate(s, 'Europe/Oslo', 'yyyy-MM-dd HH:mm'); };
   var vindu = opoint_ft_vindu(typeof startTekst === 'string' ? startTekst : FELLES_START,
     typeof sluttTekst === 'string' ? sluttTekst : FELLES_SLUTT, t0, parse);
-  var historisk = vindu.newest * 1000 < t0 - 2 * 3600 * 1000;
-  Logger.log('kjorFellesTest: vindu ' + d.fmtSek(vindu.oldest) + ' – ' + d.fmtSek(vindu.newest) + (historisk ? ' (historisk)' : ''));
+  // v2 DEL 2: et vindu som er oppgitt eksplisitt (f.eks. opoint_ft_kjor1920) er alltid en ny kjøring av et gammelt
+  // vindu, også om det skjer kort etter vindusslutt. Før ble v2 (kjørt 09:02, 1,5 t etter 07:30) regnet som «ekte»:
+  // Apps Script-treffene ble da deduplisert mot «Sendte artikler», der 07:38-kjøringen allerede hadde lagt dem → 0 treff.
+  var historisk = opoint_ft_erHistorisk(typeof startTekst === 'string' ? startTekst : FELLES_START,
+    typeof sluttTekst === 'string' ? sluttTekst : FELLES_SLUTT, vindu, t0);
+  Logger.log('kjorFellesTest: vindu ' + d.fmtSek(vindu.oldest) + ' – ' + d.fmtSek(vindu.newest) + (historisk ? ' (historisk/ny kjøring – logger ikke)' : ''));
 
   // 1) Apps Script-kildene (som originalen)
   var as = fase('Apps Script-henting', function () { return opoint_ft_hentAppsScript(ss, vindu, historisk, t0); });
@@ -70,7 +80,9 @@ function kjorFellesTest(startTekst, sluttTekst) {
     op.saker = opoint_kj_lagSaker(op.forb.kandidater, grupper);
     opoint_ft_merkSaker(op.saker);
     opoint_kj_settOppfolging(op.saker, vindu);
-    opoint_kj_settDagensEpost(op.saker, op.forb.apps, vindu, d.dagTekst);
+    // Fellesløpet: Apps Script-treffene står i SAMME e-post, så «Også i dagens e-post» gir ikke mening
+    // (og ved ny kjøring traff den dagens tidligere utsending). Settes ikke.
+    op.saker.forEach(function (s) { s.iDagensEpost = false; });
     // Rettelse 1: til vindusslutt (ikke -start), ellers faller gårsdagens utsending (07:3x) og simulerte rader
     // (datert vindusslutt) utenfor. Rader fra en kjøring etter vindusslutt (f.eks. dagens) tas ikke med.
     var sendte7 = opoint_kj_lesSendte(ss, (vindu.oldest - OPOINT_KJ_OMTALT_DAGER * 86400) * 1000, vindu.newest * 1000);
@@ -98,11 +110,28 @@ function kjorFellesTest(startTekst, sluttTekst) {
   try { if (op.tjeneste) opoint_kj_skrivKiFeil(ss, op.tjeneste); } catch (e) { /* bare logg */ }
   if (!op.ok) opoint_ft_loggOpointFeil(ss, op.feil);
 
-  // 3) E-post
+  // 3) E-post: bygg → kontroll-lesing (v2 DEL 3) → send. Ingen av delene kan hindre sendingen.
   var epost = null, send = { driveUrl: '', melding: '' };
+  try { epost = opoint_ft_byggFellesEpost(as, op, vindu, d, merknader); } catch (e) { send.melding = 'E-post kunne ikke bygges: ' + e.message; }
+  if (epost && KONTROLL_AKTIV) {
+    fase('Kontroll-lesing', function () {
+      var feilFor = op.tjeneste ? op.tjeneste.kiFeil.length : 0;
+      try {
+        if (op.tjeneste) op.tjeneste.settFrist(t0 + FELLES_SISTE_KI_FRIST_MS + 45000);
+        op.kontroll = opoint_ft_kontrollLes({ epost: epost, saker: op.saker, sm: op.sm, tjeneste: op.tjeneste, vindu: vindu, d: d });
+        if (op.kontroll.endret) {
+          try { epost = opoint_ft_byggFellesEpost(as, op, vindu, d, merknader, op.kontroll.overstyr); }
+          catch (e) { op.kontroll.melding += ' Ny bygging feilet (' + e.message + ') – sendt uten endringene.'; }
+        }
+      } catch (e) { op.kontroll = { logg: [], melding: 'Kontroll-lesing feilet: ' + e.message + ' – sendt uten kontroll.' }; }
+      try { opoint_ft_loggKontroll(ss, op.kontroll, vindu, d); } catch (e) { Logger.log('Kontroll-lesing-fanen: ' + e.message); }
+      try { if (op.tjeneste && op.tjeneste.kiFeil.length > feilFor) opoint_kj_skrivKiFeil(ss, { kiFeil: op.tjeneste.kiFeil.slice(feilFor) }); } catch (e) { /* bare logg */ }
+      if (op.tjeneste) { op.ki.kall = op.tjeneste.kall; op.ki.kostnad = op.tjeneste.kostnad; }
+    });
+  }
   fase('Sending', function () {
+    if (!epost) return;
     try {
-      epost = opoint_ft_byggFellesEpost(as, op, vindu, d, merknader);
       send = opoint_kj_lagreOgSend(epost, vindu, d.fmtSek, '[Felles-test] Medieovervåking ' + d.fmtSek(vindu.oldest) + ' – ' + d.fmtSek(vindu.newest), 'Felles-test');
     } catch (e) {
       send.melding = 'E-post feilet: ' + e.message;
@@ -113,7 +142,7 @@ function kjorFellesTest(startTekst, sluttTekst) {
   var logget = '';
   if (!historisk && LOGG_SENDTE && epost && /Sendt/.test(send.melding)) {
     try {
-      opoint_ft_loggSendteSaker(ss, opoint_ft_sendteRader(epost, op.saker, new Date(), 'ekte', op.sm));
+      opoint_ft_loggSendteSaker(ss, opoint_ft_sendteRader(epost, op.saker, new Date(), 'ekte', { setninger: epost.setningerVist || [] }));
       if (as.treff.length) { leggTilSendteUrler(ss, as.treff); loggArtikler(ss, as.treff); }
       logget = 'Sendte saker logget.';
     } catch (e) { logget = 'Logging av sendte saker feilet: ' + e.message; }
@@ -138,6 +167,12 @@ function kjorFellesTest(startTekst, sluttTekst) {
     opoint_t3_skrivFane(ss, FELLES_FANE, opoint_ft_byggRader(as, op, epost, send, vindu, d, faser, total, merknader.concat(logget ? [logget] : []), historisk), apiKey);
   } catch (e) { Logger.log('Felles-test-fanen: ' + e.message); }
   Logger.log('kjorFellesTest ferdig på ' + Math.round(total / 1000) + ' s. ' + send.melding);
+}
+
+/** v2 DEL 2: ny kjøring av et oppgitt vindu (eller vindu som sluttet for over 2 t siden) = historisk: AS på artikkeldato, ingen logging. */
+function opoint_ft_erHistorisk(startTekst, sluttTekst, vindu, nuMs) {
+  if (String(startTekst || '').trim() || String(sluttTekst || '').trim()) return true;
+  return vindu.newest * 1000 < nuMs - 2 * 3600 * 1000;
 }
 
 /** DEL G: vinduet 18.–19. nov. */
@@ -245,7 +280,7 @@ function opoint_ft_merkSaker(saker) {
 }
 
 /** Bygger den felles e-posten med originalens mal (via opoint_kj_byggEpost). */
-function opoint_ft_byggFellesEpost(as, op, vindu, d, merknader) {
+function opoint_ft_byggFellesEpost(as, op, vindu, d, merknader, overstyr) {
   var asListe = [], vist = {};
   (op.saker || []).forEach(function (sak) {
     (sak.asTreffAlle || []).forEach(function (t, i) {
@@ -266,9 +301,10 @@ function opoint_ft_byggFellesEpost(as, op, vindu, d, merknader) {
   // «saker» = grupper etter KI-gruppering (også enkeltartikler)
   var headerOp = op.ok ? 'Opoint: OK (' + op.forb.resultater.length + ' søk, ' + st.dokumenter + ' artikler, ' + st.grupper + ' saker)'
     : 'Opoint feilet: ' + op.feil;
+  if (overstyr && overstyr.flagget) headerOp += ' · Kontroll-lesing: ' + overstyr.flagget + ' kort flagget';
   return opoint_kj_byggEpost(op.saker || [], op.sm, vindu, d.fmtSek, true, st, op.forb ? op.forb.resultater : [],
-    { asTreff: asListe, visOpprinnelse: VIS_OPPRINNELSE, headerAs: headerAs, headerOp: headerOp, ekstraLinjer: merknader.filter(function (m) {
-      return /utelatt|avbrutt|feilet/.test(m); }) });
+    { asTreff: asListe, visOpprinnelse: VIS_OPPRINNELSE, headerAs: headerAs, headerOp: headerOp, visTestinfo: VIS_TESTINFO, arkivUrl: ARKIV_URL,
+      kontroll: overstyr || null, ekstraLinjer: merknader.filter(function (m) { return /utelatt|avbrutt|feilet/.test(m); }) });
 }
 
 /** «Opoint feilet» i fanen «KI-feil». */
@@ -300,7 +336,7 @@ function opoint_ft_byggRader(as, op, epost, send, vindu, d, faser, total, merkna
   var ingressInfo = function (id) {
     var s = sakFor[String(id).split(', ')[0]]; if (!s) return '';
     var x = opoint_kj_sakIngress(s);
-    return x.oppsummert ? 'KI-oppsummert' : (x.god ? 'god' : 'ikke god') + (x.fra ? ' (fra ' + x.fra + ')' : '');
+    return x.oppsummert ? 'KI-oppsummert' : (x.god ? 'god' : 'ikke god: ' + (x.grunn || '')) + (x.fra ? ' (fra ' + x.fra + ')' : '');
   };
   rader.push(['I e-posten?', 'Opprinnelse', 'URL', 'Tittel', 'Prioritet', 'Kategori', 'Sak', 'Slått sammen (gruppe/IMO)', 'Årsak hvis ikke med',
     'Prioritet – grunn (én linje)', 'Ingress']);
@@ -324,7 +360,8 @@ function opoint_ft_byggRader(as, op, epost, send, vindu, d, faser, total, merkna
     if (!k.ekskludert) return;
     rader.push(['nei', 'OP', opoint_t3_artikkelUrl(k.doc), opointTekstFelt(k.doc.header), '', '', '', '', 'Ekskludert: ' + k.ekskluderGrunn]);
   });
-  return rader.concat(opoint_ft_raderAsTreff(as, op, kort), opoint_ft_raderRepresentant(op, kort, d), opoint_ft_raderRecall(op));
+  return rader.concat(opoint_ft_raderBeholdt(as, op, epost), opoint_ft_raderAsTreff(as, op, kort), opoint_ft_raderKontroll(op),
+    opoint_ft_raderRepresentant(op, kort, d), opoint_ft_raderRecall(op));
 }
 
 /** Rettelse 2: hvert Apps Script-treff – hvilken sak og hvilket kort det havnet i. */
@@ -521,4 +558,228 @@ function avbrytFellesTest() {
 function opoint_ft_triggerKjor() {
   avbrytFellesTest();
   kjorFellesTest('', '');
+}
+
+
+// =====================================================================
+// v2 DEL 5: «Beholdt/droppet» – én linje per gruppe (sak)
+// =====================================================================
+
+function opoint_ft_raderBeholdt(as, op, epost) {
+  var rader = [[''], ['Beholdt/droppet', 'Sak', 'Tittel', 'Årsak', 'Detalj']];
+  var kort = epost ? epost.kort : [], iKort = {}, iSm = {}, fjernet = {};
+  kort.forEach(function (k) { String(k.sak || '').split(', ').forEach(function (id) { if (id) iKort[id] = k; }); });
+  ((epost && epost.setningerVist) || []).forEach(function (x) { iSm[x.sak] = true; });
+  ((epost && epost.fjernet) || []).forEach(function (k) { String(k.sak || '').split(', ').forEach(function (id) { if (id) fjernet[id] = k; }); });
+  (op.saker || []).forEach(function (s) {
+    var r = s.kiResultat || {}, dv = opoint_kj_visDoc(s);
+    var tittel = s.asTreff ? s.asTreff.tittel : opointTekstFelt(dv.header);
+    var b, aarsak, detalj = '';
+    if (fjernet[s.id]) { b = 'droppet'; aarsak = 'kontroll-lesing'; detalj = 'fjern_kort'; }
+    else if (iKort[s.id]) {
+      b = 'beholdt';
+      var k = iKort[s.id];
+      aarsak = k.imo ? 'høy (IMO-gruppe ' + k.imo + ')' : s.asTreff ? (s.asTreff.aiRelevant === false ? 'Apps Script (Mulig irrelevant)' : 'Apps Script') : (s.oppdatering ? 'høy (Oppdatering)' : 'høy');
+      detalj = r.prioritetGrunn || '';
+    } else if (s.sprakEkskludert) { b = 'droppet'; aarsak = 'språk'; detalj = s.sprakEkskludert; }
+    else if (s.oppfolging) { b = 'droppet'; aarsak = 'Oppfølging'; detalj = s.oppfolgingGrunn || ''; }
+    else if (r.relevant === false) { b = 'droppet'; aarsak = 'irrelevant'; detalj = r.irrelevantGrunn || ''; }
+    else if (r.relevant !== true) { b = 'droppet'; aarsak = 'ikke vurdert'; detalj = r.feil || ''; }
+    else if (s.imoGruppe) { var g = s.imoGruppe; b = iSm[g.id] ? 'beholdt' : 'droppet'; aarsak = 'middels (IMO-gruppe ' + g.id + ')'; detalj = iSm[g.id] ? 'i «Ellers i bransjen»' : 'ikke valgt i sammendraget'; }
+    else if ((r.prioritet || 'middels') === 'middels') { b = iSm[s.id] ? 'beholdt' : 'droppet'; aarsak = 'middels'; detalj = (iSm[s.id] ? 'i «Ellers i bransjen»' : 'ikke valgt i sammendraget (maks 5 setninger)') + (r.prioritetGrunn ? ' – ' + r.prioritetGrunn : ''); }
+    else if (r.prioritet === 'lav') { b = 'droppet'; aarsak = 'lav'; detalj = r.prioritetGrunn || ''; }
+    else { b = 'droppet'; aarsak = 'høy, men uten kort'; detalj = 'sjekk'; }
+    rader.push([b, s.id, tittel, aarsak, detalj]);
+    // Apps Script-treff i samme sak som ikke fikk eget kort = duplikat
+    (s.asTreffAlle || []).slice(1).forEach(function (t) { rader.push(['droppet', s.id, t.tittel, 'duplikat', 'samme hendelse som kortet «' + opointKort(s.asTreff.tittel, 60) + '»']); });
+  });
+  (op.forb ? op.forb.kandidater : []).forEach(function (k) {
+    if (k.ekskludert) rader.push(['droppet', '', opointTekstFelt(k.doc.header), 'ekskludert', k.ekskluderGrunn]);
+  });
+  return rader;
+}
+
+// =====================================================================
+// v2 DEL 3: kontroll-lesing før sending
+// =====================================================================
+
+var KONTROLL_SYSTEM =
+  'Du kontroll-leser en daglig norsk medieovervåking for Maritime CleanTech (norsk klynge for maritim grønn teknologi: ' +
+  'nullutslipp, alternative drivstoff, batteri, landstrøm, regelverk, og egne prosjekter som LowNoiser, HyShip, FLAGSHIPS). ' +
+  'Du får kortene (id K…), setningene i «Ellers i bransjen» (id S…) med tittel og ingress for kilden setningen viser til, ' +
+  'og headeren. Du skal IKKE skrive nytt innhold – bare flagge problemer og velge et forslag.\n\n' +
+  'For hvert kort: (a) er ingressen sammenhengende og handler den om det tittelen sier (ingen nettside-tekst, cookie-/' +
+  'abonnementstekst eller navigasjon)? (b) er tittel og ingress konsistente? (c) er kortet TYDELIG irrelevant for Maritime ' +
+  'CleanTech? (d) skrive- eller språkfeil i KI-notatet (norsk)? For sammendraget: (e) kan hver setning belegges i tittel + ' +
+  'ingress for den oppgitte kilden? (d) språkfeil? (f) dobbeltkort for samme sak, og stemmer tallene i headeren med kortene?\n\n' +
+  'Forslag: "bytt_ingress" (ingressen er dårlig, prøv en annen artikkel i gruppen), "bruk_KI_notat" (bruk en kort ' +
+  'KI-oppsummering som ingress), "fjern_kort" (bare når kortet er tydelig irrelevant eller et dobbeltkort), "fjern_setning" ' +
+  '(sammendragssetning som ikke kan belegges), "ingen" (bare merknad). alvorlighet: "kritisk" eller "merknad". ' +
+  'Flagg bare reelle problemer; alt i orden → tom liste.\n\nSvar KUN med JSON, uten kodeblokk: ' +
+  '{"funn": [{"id": "K2", "problem": "...", "alvorlighet": "kritisk", "forslag": "bytt_ingress"}]}. Bruk aldri doble ' +
+  'anførselstegn (") inne i tekstene – bruk «» i stedet.';
+var KONTROLL_FORSLAG = ['bytt_ingress', 'bruk_KI_notat', 'fjern_kort', 'fjern_setning', 'ingen'];
+
+/** Tolker kontroll-svaret: liste av {id, problem, alvorlighet, forslag}, eller null. */
+function opoint_ft_tolkKontroll(tekst) {
+  var o = opoint_kj_parseJson(tekst);
+  var liste = Array.isArray(o) ? o : (o && Array.isArray(o.funn) ? o.funn : null);
+  if (!liste) return null;
+  return liste.filter(function (x) { return x && x.id; }).map(function (x) {
+    return { id: String(x.id).trim().toUpperCase(), problem: String(x.problem || ''), alvorlighet: x.alvorlighet === 'kritisk' ? 'kritisk' : 'merknad',
+      forslag: KONTROLL_FORSLAG.indexOf(x.forslag) >= 0 ? x.forslag : 'ingen' };
+  });
+}
+
+/**
+ * kontrollLes(innhold): innhold = {epost, saker, sm, tjeneste, vindu, d}.
+ * Steg 1 regelbasert (søppelmønstre i ingress og tittel), steg 2 KI (1–2 kall), steg 3 bruker bytt_ingress,
+ * bruk_KI_notat og fjern_setning automatisk; fjern_kort maks KONTROLL_MAKS_FJERN (aldri «Om oss»/egne).
+ * Returnerer {overstyr: {ingress, fjern, fjernSetning, flagget}, endret, logg: [...], melding}.
+ * Kaster aldri for KI-feil: da logges feilen i «KI-feil» og e-posten sendes uten KI-kontroll.
+ */
+function opoint_ft_kontrollLes(innhold) {
+  var ep = innhold.epost, tj = innhold.tjeneste;
+  var ut = { overstyr: { ingress: {}, fjern: {}, fjernSetning: {}, flagget: 0 }, endret: false, logg: [], melding: '' };
+  var sakFor = {};
+  (innhold.saker || []).forEach(function (s) { sakFor[s.id] = s; });
+  var kortFor = {};
+  ep.kort.forEach(function (k) { kortFor[k.id] = k; });
+  var sakAv = function (k) { return k && !k.imo ? sakFor[String(k.sak || '').split(', ')[0]] : null; };
+  var logg = function (k, kilde, problem, alv, forslag, handling, for_, etter) {
+    ut.logg.push({ id: k ? k.id : '', tittel: k ? k.tittel : '', kilde: kilde, problem: problem, alvorlighet: alv, forslag: forslag, handling: handling, for_: for_ || '', etter: etter || '' });
+  };
+  var trengerNotat = [];   // [{k, sak, kilde, problem, alv}]
+  var byttIngress = function (k, kilde, problem, alv) {
+    var s = sakAv(k);
+    if (!s) { logg(k, kilde, problem, alv, 'bytt_ingress', 'ikke mulig (kortet har ingen gruppe å bytte i)', k.ingress, ''); return; }
+    var naa = opoint_kj_rensIngress(k.ingress).replace(/\s*\(oppsummert\)$/, '');
+    var alt = opoint_kj_ingressKandidater(s).filter(function (x) { return x.god && x.tekst !== naa; })[0];
+    if (alt) { ut.overstyr.ingress[k.id] = alt.tekst; s.ingressOverstyrt = { tekst: alt.tekst, fra: alt.fra, god: true, oppsummert: false, grunn: 'kontroll-lesing' };
+      ut.endret = true; logg(k, kilde, problem, alv, 'bytt_ingress', 'byttet til ingress fra ' + alt.fra, k.ingress, alt.tekst); }
+    else trengerNotat.push({ k: k, sak: s, kilde: kilde, problem: problem + ' (ingen annen god ingress i gruppen)', alv: alv });
+  };
+  // Steg 1: regelbasert
+  ep.kort.forEach(function (k) {
+    var sp = opoint_kj_soppel(k.ingress);
+    if (sp) byttIngress(k, 'regel', 'Søppelmønster i ingressen: ' + sp, 'kritisk');
+    var spT = opoint_kj_soppel(k.tittel);
+    if (spT) logg(k, 'regel', 'Søppelmønster i tittelen: ' + spT, 'merknad', 'ingen', 'bare logget', k.tittel, '');
+  });
+  // Steg 2: KI
+  var setn = ep.setningerVist || [];
+  var inndataFor = {};
+  ((innhold.sm && innhold.sm.inndata) || []).forEach(function (x) { inndataFor[x.sak] = x; });
+  var kortLinje = function (k) {
+    return k.id + ' | kategori: ' + k.kategori + ' | prioritet: ' + k.prioritet + ' | tittel: ' + k.tittel + ' | kilde: ' + k.kilde +
+      ' | ingress: ' + opointKort(ut.overstyr.ingress[k.id] || k.ingress, 500) + ' | KI-notat: ' + (k.notat || '–') + ' | andre kilder: ' + (k.andre || 0);
+  };
+  var irr = ep.kort.filter(function (k) { return k.prioritet === 'irrelevant'; }).length;
+  var fellesDel = 'SAMMENDRAG («Ellers i bransjen»):\n' + (setn.length ? setn.map(function (x, i) {
+    var kd = inndataFor[x.sak] || {};
+    return 'S' + (i + 1) + ': ' + x.tekst + ' [kilde: ' + (x.kilde || '') + '] || kildens tittel: ' + (kd.tittel || '') + ' || kildens ingress: ' + opointKort(kd.ingress || '', 400);
+  }).join('\n') : '(ingen)') + '\n\nHEADER: «' + ep.kort.length + ' treff i dag' + (irr ? ', hvorav ' + irr + ' under «Mulig irrelevant»' : '') +
+    '» · ' + (ep.linje || '') + '\nFaktisk antall kort: ' + ep.kort.length + ' (Mulig irrelevant: ' + irr + ').';
+  var biter = [];
+  for (var i = 0; i < ep.kort.length; i += KONTROLL_PER_KALL) biter.push(ep.kort.slice(i, i + KONTROLL_PER_KALL));
+  if (!biter.length) biter.push([]);
+  var funn = [], kiOk = true;
+  if (!tj) { kiOk = false; ut.melding = 'ingen KI-tjeneste'; }
+  biter.forEach(function (bit, bi) {
+    if (!kiOk) return;
+    var tekst = 'KORT:\n' + (bit.length ? bit.map(kortLinje).join('\n') : '(ingen)') + (bi === 0 ? '\n\n' + fellesDel : '');
+    var sv = tj.spor('kontroll' + (bi + 1), KONTROLL_SYSTEM, tekst, 1500);
+    var f = sv.ok ? opoint_ft_tolkKontroll(sv.tekst) : null;
+    if (!sv.ok) { kiOk = false; tj.kiFeil.push({ tid: new Date(), kall: 'kontroll-lesing (kall feilet)', forsok: 1, raa: String(sv.feil || ''), stopReason: '', inputTokens: '', outputTokens: '', maxTokens: 1500 }); return; }
+    if (!f) { kiOk = false; tj.loggParseFeil('kontroll-lesing', sv, 1); return; }
+    funn = funn.concat(f);
+  });
+  if (!kiOk) { ut.melding = 'KI-kontroll feilet – sendt uten (se «KI-feil»). '; }
+  // Steg 3: bruk forslagene
+  var fjernForslag = [];
+  funn.forEach(function (x) {
+    var k = kortFor[x.id];
+    if (/^S\d+$/.test(x.id)) {
+      var n = Number(x.id.slice(1)) - 1, tx = setn[n] ? setn[n].tekst : '';
+      if (x.forslag === 'fjern_setning' && setn[n]) {
+        var iOrig = (innhold.sm.setninger || []).indexOf(setn[n]);
+        ut.overstyr.fjernSetning[iOrig] = true; ut.endret = true;
+        logg({ id: x.id, tittel: '«Ellers i bransjen»' }, 'KI', x.problem, x.alvorlighet, x.forslag, 'setning fjernet', tx, '');
+      } else logg({ id: x.id, tittel: '«Ellers i bransjen»' }, 'KI', x.problem, x.alvorlighet, x.forslag, 'bare logget', tx, '');
+      return;
+    }
+    if (!k) { logg({ id: x.id, tittel: x.id === 'HEADER' ? 'Header' : '' }, 'KI', x.problem, x.alvorlighet, x.forslag, 'bare logget', '', ''); return; }
+    if (x.forslag === 'bytt_ingress') byttIngress(k, 'KI', x.problem, x.alvorlighet);
+    else if (x.forslag === 'bruk_KI_notat') { var s0 = sakAv(k); if (s0) trengerNotat.push({ k: k, sak: s0, kilde: 'KI', problem: x.problem, alv: x.alvorlighet });
+      else logg(k, 'KI', x.problem, x.alvorlighet, x.forslag, 'ikke mulig (ingen gruppe)', k.ingress, ''); }
+    else if (x.forslag === 'fjern_kort') fjernForslag.push({ k: k, x: x });
+    else logg(k, 'KI', x.problem, x.alvorlighet, x.forslag, 'bare logget', '', '');
+  });
+  // bruk_KI_notat: KI-oppsummering (norsk, 1–2 setninger, bare fra tittel + ingress), ett kall for alle
+  if (trengerNotat.length) {
+    var unike = [];
+    trengerNotat.forEach(function (x) { if (unike.indexOf(x.sak) < 0) unike.push(x.sak); });
+    unike.forEach(function (s) { delete s.ingressOverstyrt; });
+    try { if (tj) opoint_kj_lagOppsummeringer(innhold.saker, tj, unike); } catch (e) { /* logges under */ }
+    trengerNotat.forEach(function (x) {
+      if (x.sak.oppsummertIngress) {
+        var ny = x.sak.oppsummertIngress + ' (oppsummert)';
+        x.sak.ingressOverstyrt = { tekst: x.sak.oppsummertIngress, fra: 'KI', god: true, oppsummert: true, grunn: 'kontroll-lesing' };
+        ut.overstyr.ingress[x.k.id] = ny; ut.endret = true;
+        logg(x.k, x.kilde, x.problem, x.alv, 'bruk_KI_notat', 'KI-notat brukt som ingress', x.k.ingress, ny);
+      } else logg(x.k, x.kilde, x.problem, x.alv, 'bruk_KI_notat', 'ikke mulig (KI-notat kunne ikke lages)', x.k.ingress, '');
+    });
+  }
+  // fjern_kort: maks KONTROLL_MAKS_FJERN, kritiske først, aldri egne/«Om oss»
+  fjernForslag.sort(function (a, b) { return (a.x.alvorlighet === 'kritisk' ? 0 : 1) - (b.x.alvorlighet === 'kritisk' ? 0 : 1); });
+  var fjernet = 0;
+  fjernForslag.forEach(function (f) {
+    var k = f.k;
+    if (k.nevnerOss || k.kategori === 'Om oss') { logg(k, 'KI', f.x.problem, f.x.alvorlighet, 'fjern_kort', 'ikke fjernet (eget prosjekt / Om oss)', k.tittel, ''); return; }
+    if (fjernet >= KONTROLL_MAKS_FJERN) { logg(k, 'KI', f.x.problem, f.x.alvorlighet, 'fjern_kort', 'ikke fjernet (maks ' + KONTROLL_MAKS_FJERN + ' nådd)', k.tittel, ''); return; }
+    fjernet++; ut.overstyr.fjern[k.id] = true; ut.endret = true;
+    logg(k, 'KI', f.x.problem, f.x.alvorlighet, 'fjern_kort', 'kort fjernet fra e-posten', k.tittel, '');
+  });
+  if (fjernForslag.length > KONTROLL_MAKS_FJERN) { ut.overstyr.flagget = fjernForslag.length; ut.endret = true; }
+  ut.melding += funn.length + ' KI-funn, ' + ut.logg.length + ' loggført, ' + Object.keys(ut.overstyr.ingress).length + ' ingresser byttet, ' +
+    fjernet + ' kort fjernet, ' + Object.keys(ut.overstyr.fjernSetning).length + ' setninger fjernet.';
+  return ut;
+}
+
+var KONTROLL_KOLONNER = ['Dato', 'Vindu', 'Kort-id', 'Tittel', 'Kilde (regel/KI)', 'Problem', 'Alvorlighet', 'Forslag', 'Handling', 'Tekst før', 'Tekst etter'];
+
+/** Steg 4: legger radene nederst i fanen «Kontroll-lesing» (oppretter den). */
+function opoint_ft_loggKontroll(ss, k, vindu, d) {
+  if (!k) return;
+  var ark = ss.getSheetByName(KONTROLL_FANE);
+  if (!ark) { ark = ss.insertSheet(KONTROLL_FANE); ark.getRange(1, 1, 1, KONTROLL_KOLONNER.length).setValues([KONTROLL_KOLONNER]); }
+  var naa = new Date(), v = d.fmtSek(vindu.oldest) + ' – ' + d.fmtSek(vindu.newest);
+  var rader = k.logg.length ? k.logg.map(function (x) { return [naa, v, x.id, x.tittel, x.kilde, x.problem, x.alvorlighet, x.forslag, x.handling, x.for_, x.etter]; })
+    : [[naa, v, '', '', '', k.melding || 'Ingen funn', '', '', '', '', '']];
+  ark.getRange(ark.getLastRow() + 1, 1, rader.length, KONTROLL_KOLONNER.length).setValues(rader);
+}
+
+function opoint_ft_raderKontroll(op) {
+  if (!op.kontroll) return [];
+  return [[''], ['Kontroll-lesing', op.kontroll.melding || '']].concat([KONTROLL_KOLONNER.slice(2)],
+    op.kontroll.logg.map(function (x) { return [x.id, x.tittel, x.kilde, x.problem, x.alvorlighet, x.forslag, x.handling, x.for_, x.etter]; }));
+}
+
+/**
+ * Rydding: v2 (kjørt 20.11 09:02) ble feilaktig regnet som ekte kjøring og la 7 rader merket «ekte» i
+ * «Sendte saker». Fjerner rader med Dato sendt mellom fra og til (Oslo). Rører ikke andre faner.
+ */
+function opoint_ft_ryddV2() { opoint_ft_fjernSendteSakerMellom('2026-11-20 08:30', '2026-11-20 09:30'); }
+
+function opoint_ft_fjernSendteSakerMellom(fraTekst, tilTekst) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet(), ark = ss.getSheetByName(OPOINT_FANE_SENDTE_SAKER);
+  if (!ark || ark.getLastRow() < 2) { Logger.log('Ingen rader.'); return 0; }
+  var fra = Utilities.parseDate(fraTekst, 'Europe/Oslo', 'yyyy-MM-dd HH:mm').getTime(), til = Utilities.parseDate(tilTekst, 'Europe/Oslo', 'yyyy-MM-dd HH:mm').getTime();
+  var data = ark.getRange(2, 1, ark.getLastRow() - 1, 1).getValues(), n = 0;
+  for (var i = data.length - 1; i >= 0; i--) {
+    var t = data[i][0];
+    if (Object.prototype.toString.call(t) === '[object Date]' && t.getTime() >= fra && t.getTime() < til) { ark.deleteRow(i + 2); n++; }
+  }
+  Logger.log('Fjernet ' + n + ' rader fra «' + OPOINT_FANE_SENDTE_SAKER + '» (' + fraTekst + ' – ' + tilTekst + ').');
+  return n;
 }

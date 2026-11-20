@@ -904,13 +904,13 @@ console.log('Del 1-tester OK');
   assert.ok(ep.html.includes('Ellers i bransjen') && ep.html.includes('<a href="https://m.no/3"'));
   // A1: Opoint-irrelevante vises ikke under «Mulig irrelevant», men telles
   assert.ok(!ep.html.includes('Mulig irrelevant</div>') && !ep.html.includes('Ikke maritimt'));
-  assert.ok(ep.html.includes('1 vurdert som irrelevante, se arkfanen.'));
-  assert.ok(ep.html.includes('4 øvrige treff i arkfanen.')); assert.ok(ep.html.includes('Ingen nye norskspråklige treff.'));
+  assert.ok(ep.html.includes('1 vurdert som irrelevante (arkfanen).'));
+  assert.ok(ep.html.includes('4 øvrige treff (lav prioritet) i arkfanen.')); assert.ok(ep.html.includes('Ingen nye norskspråklige treff.')); assert.ok(ep.html.includes('<strong>Kun test</strong>')); assert.ok(ep.tekst.includes('== Kun test =='));
   assert.ok(ep.html.includes('Denne e-posten sendes automatisk')); // originalens bunntekst
   assert.ok(ep.html.includes('Apps Script: ikke kjørt · Opoint: OK (2 søk')); // A3
   assert.ok(!ep.html.includes('Sak 4')); // oppfølging er ikke med
   assert.strictEqual(ep.antallHoy, 2); assert.ok(!ep.html.includes('Sak 9')); // lav vises ikke
-  assert.ok(ep.tekst.includes('== Ellers i bransjen ==') && ep.tekst.includes('4 øvrige treff i arkfanen.'));
+  assert.ok(ep.tekst.includes('== Ellers i bransjen ==') && ep.tekst.includes('4 øvrige treff (lav prioritet) i arkfanen.'));
   const ep2 = f.opoint_kj_byggEpost(s3.slice(0, 2), { setninger: [], inndata: [] }, vindu, String, false, { ingenNorske: false }, []);
   assert.ok(!ep2.html.includes('Ellers i bransjen') && !ep2.html.includes('øvrige treff') && !ep2.html.includes('norskspråklige'));
 
@@ -973,9 +973,9 @@ console.log('Tillegg 2–4 og del 2–4 OK');
   const docs = [0, 1].map(i => doc({ id_article: i, orig_url: 'https://n.no/' + i, header: { text: 'Sak ' + i }, language: { text: 'no' } }));
   const k = f.opoint_kj_dedup([{ strom: 'B', navn: 'B', searchterm: 'b', dokumenter: docs }], []);
   const saker = f.opoint_kj_lagSaker(k, null);
-  // Begge sakene i ett kall (max_tokens 150·2 + 250 = 550); avkortet → nytt forsøk med dobbel grense (1100)
+  // Begge sakene i ett kall (max_tokens 250·2 + 300 = 800); avkortet → nytt forsøk med dobbel grense (1600)
   const tj = lagTj((b, n) => {
-    if (b.max_tokens === 550) return { t: '{"saker": [{"nr": 1, "relevant": true, "kategori": "Annet", "notat": "kuttet midt', s: 'max_tokens' };
+    if (b.max_tokens === 800) return { t: '{"saker": [{"nr": 1, "relevant": true, "kategori": "Annet", "notat": "kuttet midt', s: 'max_tokens' };
     return { t: '{"saker": [{"nr": 1, "relevant": true, "kategori": "Annet", "prioritet": "middels", "notat": ""}, ' +
       '{"nr": 2, "relevant": true, "kategori": "Annet", "prioritet": "lav", "notat": ""}]}' };
   });
@@ -983,9 +983,9 @@ console.log('Tillegg 2–4 og del 2–4 OK');
   assert.strictEqual(ki.reddet, 2); assert.strictEqual(tj.kiFeil.length, 1);
   const fe = tj.kiFeil[0];
   assert.ok(fe.kall.startsWith('relevans/prioritet')); assert.strictEqual(fe.stopReason, 'max_tokens');
-  assert.strictEqual(fe.inputTokens, 111); assert.strictEqual(fe.outputTokens, 22); assert.strictEqual(fe.maxTokens, 550);
+  assert.strictEqual(fe.inputTokens, 111); assert.strictEqual(fe.outputTokens, 22); assert.strictEqual(fe.maxTokens, 800);
   assert.ok(fe.raa.includes('kuttet midt'));
-  assert.ok(tj.kallListe.some(b => b.max_tokens === 1100));
+  assert.ok(tj.kallListe.some(b => b.max_tokens === 1600));
   const rader = f.opoint_kj_kiFeilRader([Object.assign({}, fe, { raa: 'x'.repeat(60000) })]);
   assert.ok(rader[0][8].length < 50000 && rader[0][8].includes('[kuttet, 60000 tegn]')); assert.strictEqual(rader[0].length, 9);
 
@@ -1081,7 +1081,7 @@ console.log('DEL 1 KI-feil OK');
   const sa = f.opoint_kj_lagSaker(ka, null);
   sa[1].kiResultat = { relevant: true, prioritet: 'høy' }; sa[2].kiResultat = { relevant: true, prioritet: 'høy', prioritetGrunn: 'NZF' };
   const rr = f.opoint_kj_byggRaderRapport({ kandidater: ka }, sa, d);
-  assert.ok(rr.some(r => r[1] === 'LowNoiser Forschungsprojekt' && r[4] === 'Ekskludert: språk (de)'));
+  assert.ok(rr.some(r => r[1] === 'LowNoiser Forschungsprojekt' && r[4] !== 'Ekskludert: språk (de)')); // v2 DEL 2: egne prosjekter ekskluderes ikke på språk
   assert.ok(rr.some(r => r[1] === 'Advances in the EU LowNoiser project' && r[4] === 'I e-posten (høy)'));
   assert.ok(rr.some(r => r[0] === sa[2].id && r[1] === 'høy' && r[2] === 'NZF'));
 
@@ -1114,11 +1114,11 @@ console.log('DEL 3d–e, 4, rapport og recall OK');
     identical_documents: { cnt: 1, document: [doc({ id_article: 9, orig_url: 'https://kopi.com/1', summary: { text: 'Koalisjonen ber IMO vedta rammeverket' } })] } });
   const k = f.opoint_kj_dedup([{ strom: 'B', navn: 'B', searchterm: 'b', dokumenter: [utenIngress] }], [], null, false, true); // uten utvidelse: kopien ligger bare i identical_documents
   const sak = f.opoint_kj_lagSaker(k, null)[0];
-  assert.deepStrictEqual(J(f.opoint_kj_sakIngress(sak)), { tekst: 'Koalisjonen ber IMO vedta rammeverket', fra: 'kopi.com', god: false, oppsummert: false });
+  assert.deepStrictEqual(J(f.opoint_kj_sakIngress(sak)), { tekst: 'Koalisjonen ber IMO vedta rammeverket', fra: 'kopi.com', god: false, oppsummert: false, grunn: 'under 80 tegn' });
   assert.strictEqual(f.opoint_kj_visSakIngress(sak), 'Koalisjonen ber IMO vedta rammeverket…');
   assert.ok(f.opoint_kj_kiBrukerTekst(sak.representant, sak).includes('Ingress: Koalisjonen ber IMO'));
   const tom = f.opoint_kj_lagSaker(f.opoint_kj_dedup([{ strom: 'B', navn: 'B', searchterm: 'b', dokumenter: [doc({ orig_url: 'https://t.no/1', summary: { text: '' } })] }], []), null)[0];
-  assert.deepStrictEqual(J(f.opoint_kj_sakIngress(tom)), { tekst: '', fra: '', god: false, oppsummert: false });
+  assert.deepStrictEqual(J(f.opoint_kj_sakIngress(tom)), { tekst: '', fra: '', god: false, oppsummert: false, grunn: 'tom' });
   assert.ok(!f.opoint_kj_kiBrukerTekst(tom.representant, tom).includes('Ingress:'));
 
   // A2: «Ellers i bransjen» – setning som tekst, (Kilde) som lenke

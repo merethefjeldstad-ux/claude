@@ -59,17 +59,17 @@ assert.strictEqual(f.opoint_kj_rensIngress('By Jane Doe · The ferry  was delive
 assert.strictEqual(f.opoint_kj_rensIngress('18-Nov-2026 In a rare move, nine groups wrote to IMO.'), 'In a rare move, nine groups wrote to IMO.');
 assert.strictEqual(f.opoint_kj_rensIngress('... maritime Industrie ist.'), 'maritime Industrie ist.');
 const fr = f.opoint_kj_vurderIngress('... maritime Industrie ist. Bereits ein ... Das von Maritime CleanTech geleitete Projekt LowNoiser vereint 15 Partner aus Industrie und Forschung.');
-assert.deepStrictEqual(J(fr), { tekst: 'Das von Maritime CleanTech geleitete Projekt LowNoiser vereint 15 Partner aus Industrie und Forschung.', god: true });
+assert.deepStrictEqual(J(fr), { tekst: 'Das von Maritime CleanTech geleitete Projekt LowNoiser vereint 15 Partner aus Industrie und Forschung.', god: true, grunn: 'utdrag' });
 assert.strictEqual(f.opoint_kj_vurderIngress('FCW Team · Battery pioneer to supply record-breaking 165MWh of battery systems for three ferries for Molslinjen…').god, false);
-assert.deepStrictEqual(J(f.opoint_kj_vurderIngress('Lloyd\'s Register has introduced a new fire safety notation for car carriers. It aims at preventing fires from')),
-  { tekst: 'Lloyd\'s Register has introduced a new fire safety notation for car carriers.', god: true }); // kuttet til hel setning (≥ 40 tegn)
+assert.deepStrictEqual(J(f.opoint_kj_vurderIngress('Lloyd\'s Register has introduced a new fire safety notation for car carriers and ro-ro vessels. It aims at preventing fires from')),
+  { tekst: 'Lloyd\'s Register has introduced a new fire safety notation for car carriers and ro-ro vessels.', god: true, grunn: 'kuttet til hel setning' }); // ≥ 80 tegn
 assert.strictEqual(f.opoint_kj_vurderIngress('the vessel was delivered to the owner yesterday in Spain.').god, false); // liten forbokstav
 // Beste ingress i gruppen: lengste gode (FCW-teksten er avkuttet; Motorship har en hel)
 const fcw = doc({ id_article: 10, unix_timestamp: iVinduet, orig_url: 'https://fuelcellsworks.com/a', summary: { text: 'FCW Team · Battery pioneer to supply record-breaking 165MWh of battery systems…' } });
-const ms = doc({ id_article: 11, unix_timestamp: iVinduet + 10, orig_url: 'https://motorship.com/a', summary: { text: 'AYK Energy will supply 165 MWh of batteries for three Molslinjen fast ferries.' } });
+const ms = doc({ id_article: 11, unix_timestamp: iVinduet + 10, orig_url: 'https://motorship.com/a', summary: { text: 'AYK Energy will supply 165 MWh of battery systems for three new Molslinjen electric fast ferries.' } });
 const sg = f.opoint_kj_lagSaker(f.opoint_kj_dedup([{ strom: 'B', navn: 'B', searchterm: 'b', dokumenter: [fcw, ms] }], []), { grupper: [[0, 1]] })[0];
 const bi = f.opoint_kj_sakIngress(sg);
-assert.strictEqual(bi.tekst, 'AYK Energy will supply 165 MWh of batteries for three Molslinjen fast ferries.'); assert.strictEqual(bi.god, true);
+assert.strictEqual(bi.tekst, 'AYK Energy will supply 165 MWh of battery systems for three new Molslinjen electric fast ferries.'); assert.strictEqual(bi.god, true);
 // Ingen god → KI-oppsummering «(oppsummert)»
 const dårlig = doc({ id_article: 12, orig_url: 'https://fullavantenews.com/x', header: { text: 'Izanami named' }, summary: { text: 'Image Credits: NYK' } });
 const sd = f.opoint_kj_lagSaker(f.opoint_kj_dedup([{ strom: 'B', navn: 'B', searchterm: 'b', dokumenter: [dårlig] }], []), null);
