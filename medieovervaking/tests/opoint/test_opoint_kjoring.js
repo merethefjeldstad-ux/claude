@@ -871,7 +871,7 @@ console.log('Del 1-tester OK');
   assert.ok(tolket.every(x => x.url.startsWith('https://m.no/')));
   const tjSm = lagTj((b, n) => n === 1 ? 'beklager' : JSON.stringify({ setninger: [{ tekst: 'Noe skjedde.', sak: 2 }] }));
   const sm = f.opoint_kj_lagSammendrag(s3, tjSm);
-  assert.strictEqual(sm.reddet, 1); assert.strictEqual(sm.setninger.length, 1); assert.ok(tjSm.kallListe.every(b => b.max_tokens === 600));
+  assert.strictEqual(sm.reddet, 1); assert.strictEqual(sm.setninger.length, 1); assert.deepStrictEqual(tjSm.kallListe.map(b => b.max_tokens), [1500, 3000]);
   assert.strictEqual(f.opoint_kj_lagSammendrag(s3.slice(0, 2), lagTj(() => '{}')).melding, 'Ingen middels-saker – ingen seksjon.');
   const rSm = f.opoint_kj_byggRaderSammendrag(sm);
   assert.ok(rSm.some(r => r[0] === 'Inndata') && rSm.some(r => r[3] === 'Noe skjedde.'));
@@ -907,7 +907,7 @@ console.log('Del 1-tester OK');
   assert.ok(ep.html.includes('1 vurdert som irrelevante, se arkfanen.'));
   assert.ok(ep.html.includes('4 øvrige treff i arkfanen.')); assert.ok(ep.html.includes('Ingen nye norskspråklige treff.'));
   assert.ok(ep.html.includes('Denne e-posten sendes automatisk')); // originalens bunntekst
-  assert.ok(ep.html.includes('Apps Script: ikke kjørt · Opoint: OK (2 spørringer')); // A3
+  assert.ok(ep.html.includes('Apps Script: ikke kjørt · Opoint: OK (2 søk')); // A3
   assert.ok(!ep.html.includes('Sak 4')); // oppfølging er ikke med
   assert.strictEqual(ep.antallHoy, 2); assert.ok(!ep.html.includes('Sak 9')); // lav vises ikke
   assert.ok(ep.tekst.includes('== Ellers i bransjen ==') && ep.tekst.includes('4 øvrige treff i arkfanen.'));
@@ -1040,10 +1040,19 @@ console.log('DEL 1 KI-feil OK');
   const om = f.opoint_kj_settOmtaltTidligere(saker, sendte, tj);
   assert.strictEqual(om.ki, 1); assert.ok(saker[1].omtaltTidligere.startsWith('KI:')); assert.strictEqual(saker[0].omtaltTidligere, undefined);
   assert.ok(tj.kallListe[0].messages[0].content.includes('TIDLIGERE:\nT1 NYK bestiller'));
+  // Rettelse 1: samme hendelse uten ny informasjon → Oppfølging (ikke i e-posten)
+  assert.strictEqual(saker[1].oppfolging, true); assert.ok(saker[1].oppfolgingGrunn.startsWith('Sendt før (KI'));
+  saker[1].oppfolging = false; saker[1].oppfolgingGrunn = '';
+  // … med ny informasjon → «Oppdatering» (vises)
+  const tjO = lagTj(() => '{"treff": [{"ny": 1, "tidligere": "T1", "nytt": "Skipet har fått navnet Izanami"}]}');
+  const omO = f.opoint_kj_settOmtaltTidligere(saker, sendte, tjO);
+  assert.strictEqual(omO.oppdatering, 1); assert.strictEqual(saker[1].oppfolging, false); assert.strictEqual(saker[1].oppdatering.nytt, 'Skipet har fått navnet Izanami');
   const urlSendte = [{ tid: 900, norm: 'b.no/1', url: 'https://b.no/1', tittel: 'Samme URL' }];
   const tj2 = lagTj(() => '{"treff": []}');
   const om2 = f.opoint_kj_settOmtaltTidligere(saker, urlSendte, tj2);
   assert.strictEqual(om2.url, 1); assert.strictEqual(tj2.kallListe.length, 0); // ingen saker igjen for KI
+  assert.strictEqual(saker[1].oppfolging, true); assert.ok(saker[1].oppfolgingGrunn.includes('samme URL'));
+  saker[1].oppfolging = false; saker[1].oppfolgingGrunn = '';
   // Oppfølging-saker får ingen KI
   const tj3 = lagTj(b => JSON.stringify({ saker: [{ nr: 1, relevant: true, kategori: 'Annet', prioritet: 'høy', prioritet_grunn: 'Stor ordre' }] }));
   f.opoint_kj_vurderSaker(saker, { sokeord: [] }, tj3, 0, vindu);
@@ -1105,11 +1114,11 @@ console.log('DEL 3d–e, 4, rapport og recall OK');
     identical_documents: { cnt: 1, document: [doc({ id_article: 9, orig_url: 'https://kopi.com/1', summary: { text: 'Koalisjonen ber IMO vedta rammeverket' } })] } });
   const k = f.opoint_kj_dedup([{ strom: 'B', navn: 'B', searchterm: 'b', dokumenter: [utenIngress] }], [], null, false, true); // uten utvidelse: kopien ligger bare i identical_documents
   const sak = f.opoint_kj_lagSaker(k, null)[0];
-  assert.deepStrictEqual(J(f.opoint_kj_sakIngress(sak)), { tekst: 'Koalisjonen ber IMO vedta rammeverket', fra: 'kopi.com' });
+  assert.deepStrictEqual(J(f.opoint_kj_sakIngress(sak)), { tekst: 'Koalisjonen ber IMO vedta rammeverket', fra: 'kopi.com', god: false, oppsummert: false });
   assert.strictEqual(f.opoint_kj_visSakIngress(sak), 'Koalisjonen ber IMO vedta rammeverket…');
   assert.ok(f.opoint_kj_kiBrukerTekst(sak.representant, sak).includes('Ingress: Koalisjonen ber IMO'));
   const tom = f.opoint_kj_lagSaker(f.opoint_kj_dedup([{ strom: 'B', navn: 'B', searchterm: 'b', dokumenter: [doc({ orig_url: 'https://t.no/1', summary: { text: '' } })] }], []), null)[0];
-  assert.deepStrictEqual(J(f.opoint_kj_sakIngress(tom)), { tekst: '', fra: '' });
+  assert.deepStrictEqual(J(f.opoint_kj_sakIngress(tom)), { tekst: '', fra: '', god: false, oppsummert: false });
   assert.ok(!f.opoint_kj_kiBrukerTekst(tom.representant, tom).includes('Ingress:'));
 
   // A2: «Ellers i bransjen» – setning som tekst, (Kilde) som lenke

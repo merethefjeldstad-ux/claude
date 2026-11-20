@@ -636,7 +636,7 @@ function opoint_kjor() {
       saker = opoint_kj_lagSaker(forb.kandidater, grupper);
       opoint_kj_settOppfolging(saker, vindu);
       opoint_kj_settDagensEpost(saker, forb.apps, vindu, d.dagTekst);
-      var sendte7 = opoint_kj_lesSendte(ss, (vindu.oldest - OPOINT_KJ_OMTALT_DAGER * 86400) * 1000, vindu.oldest * 1000);
+      var sendte7 = opoint_kj_lesSendte(ss, (vindu.oldest - OPOINT_KJ_OMTALT_DAGER * 86400) * 1000, vindu.newest * 1000);
       ekstra.omtaltMelding = opoint_kj_settOmtaltTidligere(saker, sendte7, tjeneste).melding;
       ki = opoint_kj_vurderSaker(saker, forb.oppsett, tjeneste, 1, vindu);   // ett kall holdes av til sammendraget
       ki.gruppering = grupper.melding;
@@ -1151,6 +1151,89 @@ function opoint_kj_grupperSaker(kandidater, tjeneste) {
 }
 
 // ---------------------------------------------------------------------
+// Rettelse 2: egne navn/prosjekter skal ikke skjules. En gruppe med egne treff deles etter
+// VINKEL: bare samme hendelse/pressemelding (også oversatt eller gjengitt) står sammen.
+// ---------------------------------------------------------------------
+
+var OPOINT_KJ_EGNE_SYSTEM =
+  'Du deler nyhetsartikler om Maritime CleanTech og deres prosjekter i undergrupper. Du får en eller flere GRUPPER (A, B …) ' +
+  'med nummererte artikler (overskrift, ingress, kilde). Innen hver gruppe skal artikler stå sammen KUN hvis de gjelder ' +
+  'SAMME konkrete hendelse eller pressemelding (også oversatt, forkortet eller gjengitt av andre). Ulike vinklinger på samme ' +
+  'prosjekt er ulike undergrupper – f.eks. en pressemelding om prosjektet og partnerne, tiltak på et bestemt skip, og planlagte ' +
+  'målinger er tre undergrupper. Er du i tvil: egne undergrupper.\n\nSvar KUN med JSON, uten kodeblokk: ' +
+  '{"A": [[1, 2], [3]], "B": [[1], [2, 3]]}. Hver artikkel i nøyaktig én undergruppe.';
+
+/** Er kandidaten et eget treff (fast relevant navn i Opoint, Apps Script «Nevner oss», eller OUR_NAMES i teksten)? */
+function opoint_kj_erEgen(k) {
+  if (k.fastRelevant) return true;
+  if ((k.asTreffListe || []).some(function (t) { return t.aiNevnerOss || nevnerOssIKode((t.tittel || '') + ' ' + (t.ingress || '')); })) return true;
+  return nevnerOssIKode(opointTekstFelt(k.doc.header) + ' ' + opoint_kj_ingress(k.doc));
+}
+
+/**
+ * Deler grupper som inneholder minst ett eget treff etter vinkel (ett KI-kall for alle slike
+ * grupper, ett nytt forsøk ved parsefeil). Feiler kallet, beholdes gruppene uendret (merknad).
+ * Endrer grupper.grupper. Returnerer {delt, nye, melding, detaljer: [{forGruppe, etter}]}.
+ */
+function opoint_kj_delEgneGrupper(kandidater, grupper, tjeneste) {
+  var ut = { delt: 0, nye: 0, melding: '', detaljer: [] };
+  var liste = (grupper && grupper.grupper) || [];
+  var egne = [];
+  liste.forEach(function (g, gi) { if (g.length >= 2 && g.some(function (i) { return opoint_kj_erEgen(kandidater[i]); })) egne.push(gi); });
+  if (!egne.length) { ut.melding = 'Ingen grupper med egne treff.'; return ut; }
+  if (!tjeneste) { ut.melding = egne.length + ' grupper med egne treff, ikke delt (ingen KI).'; return ut; }
+  var navn = function (n) { return n < 26 ? String.fromCharCode(65 + n) : 'G' + n; };
+  var tekst = egne.map(function (gi, n) {
+    return 'GRUPPE ' + navn(n) + '\n' + liste[gi].map(function (i, j) {
+      var k = kandidater[i];
+      var t = (k.asTreffListe && k.asTreffListe[0]) || null;
+      var tittel = t ? t.tittel : opointTekstFelt(k.doc.header);
+      var ing = opoint_kj_vurderIngress(t ? t.ingress : opointTekstFelt(k.doc.summary)).tekst;
+      return (j + 1) + '. ' + String(tittel).replace(/\s+/g, ' ').trim() + (ing ? ' || ' + opointKort(ing, 220) : '') + ' || Kilde: ' + (t ? t.kilde : k.domene);
+    }).join('\n');
+  }).join('\n\n');
+  var tolk = function (svar) {
+    var o = opoint_kj_parseJson(svar);
+    if (!o || typeof o !== 'object') return null;
+    var res = {};
+    for (var n = 0; n < egne.length; n++) {
+      var g = liste[egne[n]], del = o[navn(n)];
+      if (!Array.isArray(del)) return null;
+      var brukt = {}, under = [];
+      del.forEach(function (u) {
+        var nr = (Array.isArray(u) ? u : [u]).map(Number).filter(function (x) { return x >= 1 && x <= g.length && !brukt[x] && (brukt[x] = true); });
+        if (nr.length) under.push(nr.map(function (x) { return g[x - 1]; }));
+      });
+      g.forEach(function (i, j) { if (!brukt[j + 1]) under.push([i]); });  // manglende → egen undergruppe
+      res[n] = under;
+    }
+    return res;
+  };
+  var maks = 300 + 15 * egne.reduce(function (a, gi) { return a + liste[gi].length; }, 0);
+  var sv = tjeneste.spor('egne', OPOINT_KJ_EGNE_SYSTEM, tekst, maks);
+  var res = sv.ok ? tolk(sv.tekst) : null;
+  if (sv.ok && !res) {
+    tjeneste.loggParseFeil('egne vinkler', sv, 1);
+    sv = tjeneste.spor('egne2', OPOINT_KJ_EGNE_SYSTEM, tekst, 2 * maks);
+    res = sv.ok ? tolk(sv.tekst) : null;
+    if (sv.ok && !res) tjeneste.loggParseFeil('egne vinkler', sv, 2);
+  }
+  if (!res) { ut.melding = egne.length + ' grupper med egne treff ble IKKE delt (' + (sv.ok ? 'kunne ikke tolke KI-svaret' : sv.feil) + ').'; return ut; }
+  var nyListe = [];
+  liste.forEach(function (g, gi) {
+    var n = egne.indexOf(gi);
+    if (n < 0) { nyListe.push(g); return; }
+    var under = res[n];
+    ut.detaljer.push({ forGruppe: g.slice(), etter: under });
+    if (under.length > 1) { ut.delt++; ut.nye += under.length - 1; }
+    under.forEach(function (u) { if (u.length >= 2) nyListe.push(u); });   // enkeltartikler blir egne saker av seg selv
+  });
+  grupper.grupper = nyListe;
+  ut.melding = egne.length + ' grupper med egne treff; ' + ut.delt + ' delt etter vinkel (+' + ut.nye + ' saker).';
+  return ut;
+}
+
+// ---------------------------------------------------------------------
 // Steg 4b: saker og representant
 // ---------------------------------------------------------------------
 
@@ -1256,25 +1339,34 @@ function opoint_kj_lagSaker(kandidater, grupper) {
 // ---------------------------------------------------------------------
 
 var OPOINT_KJ_PRIORITETER = ['høy', 'middels', 'lav'];
-var OPOINT_KJ_KI_PROMPTVERSJON = 'opoint-3'; // opoint-3: flere saker per kall, prioritet_grunn, IMO NZF-regel
+var OPOINT_KJ_KI_PROMPTVERSJON = 'opoint-4'; // opoint-4: strengere «høy» (rettelse 5); opoint-3: flere saker per kall, prioritet_grunn, IMO NZF
 var OPOINT_KJ_KI_MAX_TOKENS = 400;           // per enkeltsak; et kall med n saker får 150·n + 250 (min. 400)
 var OPOINT_KJ_REL_PER_KALL = 8;              // saker per relevanskall (holder seg under 80 kall for en hel dag)
 var OPOINT_KJ_NZF_SLUTT = Date.UTC(2026, 11, 4, 23, 0); // MEPC 85 avsluttet 4. des 2026 (Oslo-tid)
 
-/** Del 4: prioritetsreglene. IMO NZF/MEPC 85-regelen tas med så lenge vinduet slutter før 5. des 2026. */
+/**
+ * Del 4 + rettelse 5: prioritetsreglene. «høy» krever norsk aktør som part, egne prosjekter eller
+ * et størrelseskriterium; regionale/kommunale prosjekter uten norsk kobling, jubileer og rene
+ * selskapsnyheter er «middels». IMO NZF/MEPC 85-regelen gjelder så lenge vinduet slutter før 5. des 2026.
+ */
 function opoint_kj_prioritetRegler(vindu) {
   var nzf = !vindu || vindu.newest * 1000 <= OPOINT_KJ_NZF_SLUTT;
   return '"prioritet" settes for relevante saker (for irrelevante: "lav"):\n' +
-    '- "høy": Maritime CleanTech og egne prosjekter; norske aktører (rederi, verft, leverandør, Enova, Forskningsrådet, ' +
-    'myndigheter); eller utenlandske saker av stor betydning: verdensførste i kommersiell skala (ammoniakk, hydrogen, ' +
-    'batteri, vind, metanol), ordre eller kansellering på minst 100 mill. USD eller minst fire skip, formelle beslutninger ' +
-    'i IMO/EU (ikke innspill), eller sentrale konkurrenter/partnere.' +
+    '- "høy" KUN når minst ett av disse er oppfylt: (a) Maritime CleanTech eller egne prosjekter; (b) en norsk aktør er ' +
+    'part i saken (norsk rederi, verft, leverandør, havn, Enova, Forskningsrådet, norske myndigheter) – ikke bare nevnt; ' +
+    '(c) utenlandsk sak som oppfyller et størrelseskriterium: verdensførste i kommersiell skala (ammoniakk, hydrogen, ' +
+    'batteri, vind, metanol); kontrakt, ordre eller kansellering på minst 100 mill. USD eller minst fire skip mellom ' +
+    'rederi og verft/leverandør (ikke offentlige planer, utredninger, anbud eller forsøk); formelle beslutninger i IMO/EU ' +
+    '(ikke innspill eller forslag); eller sentrale konkurrenter/partnere i en konkret kontrakt eller et prosjekt.' +
     (nzf ? ' Saker om IMO Net-Zero Framework / MEPC 85 og felles uttalelser fra bransjeorganisasjoner (BIMCO, ICS, ' +
       'INTERTANKO, IBIA, WSC m.fl.) er også "høy".' : '') + '\n' +
-    '- "middels": relevante utenlandske saker om teknologi, marked eller regulering som ikke når "høy" (rutineleveranser, ' +
-    'studier, innspill, teknologidemoer).\n' +
+    '- "middels" (aldri "høy") selv om saken er relevant: regionale eller kommunale prosjekter uten norsk kobling (f.eks. ' +
+    'bybåt- og fergeprosjekter i India, USA eller Asia, også med mange fartøy), jubileer, rene selskapsnyheter (jubileum, ' +
+    'salgstall, ansettelser, kontoråpning, produktlansering uten kontrakt), studier og rapporter, innspill, ' +
+    'teknologidemoer og rutineleveranser.\n' +
     '- "lav": utstyr, anbud, debatt, forbrukerstoff eller svak maritim kobling.\n' +
-    '"prioritet_grunn" er én kort linje (maks 15 ord, norsk) om hvorfor prioriteten ble valgt.';
+    '"prioritet_grunn" er én kort linje (maks 15 ord, norsk) som sier hvilket kriterium som gir "høy" (a, b eller c og ' +
+    'hvordan), eller hvorfor saken er "middels"/"lav".';
 }
 
 /** Systemprompt for relevans/prioritet (bygges ved kall, bruker kategoriene fra 09_AITest.gs). */
@@ -1297,34 +1389,129 @@ function opoint_kj_kiSystem(vindu) {
 }
 
 /**
- * A4: ingress for en sak. Representantens egen ingress hvis den finnes; ellers
- * første ikke-tomme ingress blant gruppens øvrige artikler (medlemmer i
- * prioritetsrekkefølge, dokumenter dedupen har slått inn, og identical_documents).
- * Returnerer {tekst, fra} der fra er domenet ingressen er hentet fra ('' = egen).
+ * Rettelse 3: renser en ingress for støy i starten: «Image Credits: …», «Photo: …»,
+ * «Published: <dato>», en dato først, byline («FCW Team ·», «By Navn ·»), innledende «...»/«…»,
+ * «Read more»/«Les mer» til slutt og doble mellomrom. Teksten ellers endres ikke.
  */
-function opoint_kj_sakIngress(sak) {
-  var rep0 = sak.representant;
-  var egen = opoint_kj_ingress(rep0.doc);
-  if (egen) return { tekst: egen, fra: '' };
-  var kilder = [];
-  sak.medlemmer.slice().sort(opoint_kj_representantSortering).forEach(function (m) {
-    kilder.push({ doc: m.doc, domene: m.domene });
-    (m.slattSammen || []).forEach(function (x) { kilder.push({ doc: x.doc, domene: x.domene }); });
-    var idd = m.doc.identical_documents && Array.isArray(m.doc.identical_documents.document) ? m.doc.identical_documents.document : [];
-    idd.forEach(function (x) { kilder.push({ doc: x, domene: opoint_kj_domene(x) }); });
-  });
-  for (var i = 0; i < kilder.length; i++) {
-    var t = opoint_kj_ingress(kilder[i].doc);
-    if (t) return { tekst: t, fra: kilder[i].domene || '(ukjent)' };
+function opoint_kj_rensIngress(t) {
+  var s = String(t || '').replace(/\s+/g, ' ').trim();
+  var forrige = null, runder = 0;
+  var dato = '(?:\\d{1,2}[./-]\\d{1,2}[./-]\\d{2,4}|\\d{4}-\\d{2}-\\d{2}|\\d{1,2}-[A-Z][a-z]{2}-\\d{4}|' +
+    '[A-Z][a-z]{2,8}\\.? \\d{1,2},? \\d{4}|\\d{1,2}\\.? [A-Za-zæøå]{3,9}\\.? \\d{4})(?:\\s*(?:,|kl\\.?|at)?\\s*\\d{1,2}[:.]\\d{2}(?:\\s*[AP]M)?)?';
+  while (s !== forrige && runder++ < 6) {
+    forrige = s;
+    s = s.replace(/^(?:\.{2,}|…)\s*/, '');
+    s = s.replace(/^(?:IMAGE|PHOTO|[Ii]mage|[Pp]hoto|[Pp]icture|[Ff]oto|[Bb]ilde|[Ii]llustrasjon)s?\s*(?:[Cc]redits?|CREDITS?|[Kk]reditt|by)?\s*:\s*\S+(?:\s+(?:[A-ZÆØÅ0-9&./-]{2,}|\/|\||via|og|and|&))*\s*/, '');
+    s = s.replace(new RegExp('^(?:Published|Publisert|Updated|Oppdatert|Posted|Dato|Date)(?:\\s+on)?\\s*:?\\s*' + dato + '\\s*(?:[-–|·:]\\s*)?', 'i'), '');
+    s = s.replace(new RegExp('^' + dato + '\\s*(?:[-–|·:]\\s*)?(?=[A-ZÆØÅ"«“])'), '');
+    s = s.replace(/^[A-ZÆØÅ][\wÆØÅæøåÄÖÜäöü.&'-]*(?:\s+[A-ZÆØÅ][\wÆØÅæøåÄÖÜäöü.&'-]*){0,3}\s+[·•|]\s+/, '');
+    s = s.replace(/^(?:By|Av|Written by|Skrevet av)\s+[A-ZÆØÅ][\wÆØÅæøåÄÖÜäöü.'-]*(?:\s+(?:[A-ZÆØÅ][\wÆØÅæøåÄÖÜäöü.'-]*|van|von|de|der|af)){0,3}\s*(?:[·•|,–-]\s*|(?=(?:The|A|An|In|On|This|It|Det|Den|En|Et|I)\s))/, '');
   }
-  return { tekst: '', fra: '' };
+  s = s.replace(/\s*\((?:Photo|Image|Foto|Bilde)[^)]{0,60}\)/gi, '');
+  s = s.replace(/\s*(?:\[\s*(?:…|\.\.\.)\s*\]|\bRead more\b\.?|\bLes mer\b\.?|\bContinue reading\b.*)\s*$/i, '');
+  return s.replace(/\s+/g, ' ').trim();
 }
 
-/** Visning av sakens ingress: «…» hvis den ikke slutter på . ! ? … (som opoint_kj_visIngress). */
+/**
+ * Rettelse 3: vurderer en (renset) ingress. God = minst 40 tegn, starter med stor bokstav eller
+ * tall, ikke et utdrag med «...» midt i, og slutter med hel setning. Er bare slutten avkuttet,
+ * kuttes den til siste hele setning (minst 60 tegn igjen). Utdrag («... a ... B.») gir beste hele
+ * setning. Returnerer {tekst, god}.
+ */
+function opoint_kj_vurderIngress(t) {
+  var s = opoint_kj_rensIngress(t);
+  if (!s) return { tekst: '', god: false };
+  var slutt = /[.!?]["'”’»)\]]*$/;
+  var hel = function (x) { return /^[A-ZÆØÅÄÖÜÉ0-9"«“(]/.test(x) && slutt.test(x) && x.length >= 40; };
+  if (/\s(?:\.{3}|…)\s/.test(s)) {
+    var biter = s.split(/\s*(?:\.{3}|…)\s*/).map(function (x) { return x.trim(); }).filter(hel);
+    biter.sort(function (a, b) { return b.length - a.length; });
+    return biter.length ? { tekst: biter[0], god: true } : { tekst: s, god: false };
+  }
+  if (!/^[A-ZÆØÅÄÖÜÉ0-9"«“(]/.test(s) || s.length < 40) return { tekst: s, god: false };
+  if (slutt.test(s)) return { tekst: s, god: true };
+  var re = /[.!?]["'”’»)\]]*(?=\s)/g, m, sist = -1;
+  while ((m = re.exec(s)) !== null) sist = m.index + m[0].length;
+  if (sist >= 60) return { tekst: s.slice(0, sist), god: true };
+  return { tekst: s, god: false };
+}
+
+/**
+ * A4 + rettelse 3: ingress for en sak. Kandidater: dokumentet som vises, representanten,
+ * øvrige medlemmer, dokumenter dedupen slo inn, identical_documents og Apps Script-treffene.
+ * Alle renses. Velger den lengste GODE (opoint_kj_vurderIngress), først blant tillatte språk
+ * (og ukjent språk, f.eks. Apps Script), så blant alle. Finnes ingen god og KI har laget en
+ * oppsummering (opoint_kj_lagOppsummeringer), brukes den (oppsummert: true). Ellers dokumentets
+ * egen rensede ingress, eller den lengste fra gruppen (god: false; vises med «…»).
+ * Returnerer {tekst, fra, god, oppsummert} der fra er domenet ('' = dokumentet som vises).
+ */
+function opoint_kj_sakIngress(sak) {
+  var vis = opoint_kj_visDoc(sak), kilder = [], sett = [];
+  var legg = function (doc, domene, sprak) { if (doc && sett.indexOf(doc) < 0) { sett.push(doc); kilder.push({ doc: doc, domene: domene, sprak: sprak }); } };
+  legg(vis, '', opoint_kj_sprak(vis));
+  (sak.medlemmer || []).slice().sort(opoint_kj_representantSortering).forEach(function (m) {
+    legg(m.doc, m.domene, m.erAS ? '' : opoint_kj_sprak(m.doc));
+    (m.slattSammen || []).forEach(function (x) { legg(x.doc, x.domene, opoint_kj_sprak(x.doc)); });
+    var idd = m.doc.identical_documents && Array.isArray(m.doc.identical_documents.document) ? m.doc.identical_documents.document : [];
+    idd.forEach(function (x) { legg(x, opoint_kj_domene(x), opoint_kj_sprak(x)); });
+    (m.asTreffListe || []).forEach(function (t) { legg({ summary: { text: t.ingress || '' } }, opoint_kj_normDomene(opoint_kj_normUrl(t.lenke)) || t.kilde || '', ''); });
+  });
+  var vurdert = kilder.map(function (k, i) {
+    var v = opoint_kj_vurderIngress(opointTekstFelt(k.doc.summary));
+    return { tekst: v.tekst, god: v.god, fra: i === 0 ? '' : (k.domene || '(ukjent)'), ok: !k.sprak || OPOINT_KJOR_SPRAK_TILLATT.indexOf(k.sprak) >= 0, i: i };
+  }).filter(function (x) { return x.tekst; });
+  var lengst = function (liste) { return liste.slice().sort(function (a, b) { return (b.tekst.length - a.tekst.length) || (a.i - b.i); })[0]; };
+  var best = lengst(vurdert.filter(function (x) { return x.god && x.ok; })) || lengst(vurdert.filter(function (x) { return x.god; }));
+  if (best) return { tekst: best.tekst, fra: best.fra, god: true, oppsummert: false };
+  if (sak.oppsummertIngress) return { tekst: sak.oppsummertIngress, fra: 'KI', god: true, oppsummert: true };
+  // Ingen god og ingen KI-oppsummering: dokumentets egen (rensede) ingress, ellers den lengste fra gruppen
+  var rest = vurdert.filter(function (x) { return x.i === 0; })[0] || lengst(vurdert.filter(function (x) { return x.ok; })) || lengst(vurdert);
+  return rest ? { tekst: rest.tekst, fra: rest.fra, god: false, oppsummert: false } : { tekst: '', fra: '', god: false, oppsummert: false };
+}
+
+/** Visning av sakens ingress: «…» hvis den ikke er god; KI-oppsummering merkes «(oppsummert)». */
 function opoint_kj_visSakIngress(sak) {
-  var t = opoint_kj_sakIngress(sak).tekst;
-  if (!t) return '';
-  return opoint_kj_visIngress({ summary: { text: t } });
+  var x = opoint_kj_sakIngress(sak);
+  if (!x.tekst) return '';
+  if (x.oppsummert) return x.tekst + ' (oppsummert)';
+  return x.god ? x.tekst : opoint_kj_visIngress({ summary: { text: x.tekst } });
+}
+
+// Rettelse 3: KI-oppsummering når ingen ingress i gruppen er god (bare saker som får kort).
+var OPOINT_KJ_OPPS_MAKS = 20;
+var OPOINT_KJ_OPPS_SYSTEM =
+  'Du skriver en kort ingress på norsk for nyhetssaker i en medieovervåking. Du får nummererte saker med overskrift og ' +
+  'ingresstekst (kan være avkuttet eller rotete). Skriv 1–2 setninger (maks 40 ord) per sak, KUN basert på overskriften og ' +
+  'ingressteksten: ingen tall, navn, steder eller årsaker som ikke står der, ingen vurderinger og ingen kommentarer om ' +
+  'teksten.\n\nSvar KUN med JSON, uten kodeblokk: {"saker": [{"nr": 1, "oppsummering": "..."}]}. Bruk aldri doble ' +
+  'anførselstegn (") inne i tekstene – bruk «» i stedet.';
+
+/** Saker som får eget kort i e-posten (samme regler som opoint_kj_byggEpost). */
+function opoint_kj_faarKort(s) {
+  var r = s.kiResultat || {};
+  if (s.asTreff) return s.asTreff.aiRelevant !== false;
+  if (s.sprakEkskludert || s.oppfolging || r.relevant !== true || s.imoGruppe) return false;
+  return r.prioritet === 'høy';
+}
+
+function opoint_kj_lagOppsummeringer(saker, tjeneste) {
+  var ut = { antall: 0, melding: '' };
+  var liste = saker.filter(function (s) { return opoint_kj_faarKort(s) && !opoint_kj_sakIngress(s).god; }).slice(0, OPOINT_KJ_OPPS_MAKS);
+  if (!liste.length) { ut.melding = 'Alle kort har god ingress – ingen KI-oppsummering.'; return ut; }
+  if (!tjeneste) { ut.melding = liste.length + ' kort uten god ingress (ingen KI-tjeneste).'; return ut; }
+  var tekst = liste.map(function (s, i) {
+    return (i + 1) + '. ' + opointTekstFelt(opoint_kj_visDoc(s).header).replace(/\s+/g, ' ').trim() + ' || ' + opointKort(opoint_kj_sakIngress(s).tekst, 400);
+  }).join('\n');
+  var sv = tjeneste.spor('opps', OPOINT_KJ_OPPS_SYSTEM, tekst, 120 * liste.length + 200);
+  var o = sv.ok ? opoint_kj_parseJson(sv.tekst) : null;
+  if (sv.ok && !(o && Array.isArray(o.saker))) { tjeneste.loggParseFeil('oppsummering', sv, 1); o = null; }
+  if (!sv.ok) { ut.melding = 'Oppsummering feilet: ' + sv.feil; return ut; }
+  (o ? o.saker : []).forEach(function (x) {
+    var s = liste[Number(x && x.nr) - 1], t = x && typeof x.oppsummering === 'string' ? x.oppsummering.replace(/\s+/g, ' ').trim() : '';
+    if (s && t && !s.oppsummertIngress) { s.oppsummertIngress = t; ut.antall++; }
+  });
+  ut.melding = ut.antall + ' av ' + liste.length + ' kort uten god ingress fikk KI-oppsummering (merket «oppsummert»).';
+  return ut;
 }
 
 /** Teksten for én sak (uten «SAK n»-linjen). Ingress ordrett (A4: fra gruppen hvis representanten mangler); tom → bare overskrift (og kilde). */
@@ -1464,7 +1651,7 @@ function opoint_kj_vurderSaker(saker, oppsett, tjeneste, reserver, vindu) {
       return;
     }
     if (sak.sprakEkskludert) { r.kilde = 'Ekskludert: språk (' + sak.sprakEkskludert + ')'; return; }
-    if (sak.oppfolging) { r.kilde = 'Oppfølging (eldste artikkel før vinduet) – ingen KI'; return; }
+    if (sak.oppfolging) { r.kilde = 'Oppfølging (' + (sak.oppfolgingGrunn || 'eldste artikkel før vinduet') + ') – ingen KI'; return; }
     var fastNavn = [];
     sak.medlemmer.forEach(function (m) { (m.fastNavn || []).forEach(function (n) { if (fastNavn.indexOf(n) < 0) fastNavn.push(n); }); });
     if (sak.fastRelevant) {
@@ -1542,17 +1729,48 @@ function opoint_kj_vurderSaker(saker, oppsett, tjeneste, reserver, vindu) {
 // identical_documents) er før vindusstart. Vises bare i fanen, ikke i e-posten.
 // ---------------------------------------------------------------------
 
+/**
+ * Rettelse 1: dato i URL-en (…/2026/11/17/…, …/2026-11-17/…, …-20261117…). Opoint sin
+ * unix_timestamp kan være indekseringstid (FuelCellsWorks-saken om AYK hadde /2026/11/17/ i
+ * URL-en, men tidsstempel i vinduet 19.–20. nov). Returnerer 'ÅÅÅÅ-MM-DD' eller ''.
+ */
+function opoint_kj_urlDato(url) {
+  var u = String(url || '');
+  var m = u.match(/[\/_-](20\d{2})[\/-](0[1-9]|1[0-2])[\/-](0[1-9]|[12]\d|3[01])(?=[\/_.-]|$)/) ||
+    u.match(/[\/_-](20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(?=[\/_.-]|$)/);
+  return m ? m[1] + '-' + m[2] + '-' + m[3] : '';
+}
+
+/** Oslo-dato (ÅÅÅÅ-MM-DD) for et Unix-sekund (UTC+1; vinteren 2026 er det ingen sommertid i vinduene). */
+function opoint_kj_osloDag(sek) { return new Date((sek + 3600) * 1000).toISOString().slice(0, 10); }
+
+/**
+ * Oppfølging (rettelse 1): tidligste publisering i gruppen (alle medlemmer, dokumenter dedupen
+ * har slått inn, identical_documents og Apps Script-treff) er før vindusstart – enten etter
+ * Opoints tidsstempel eller etter en dato i URL-en som er en hel kalenderdag før vindusstarten.
+ * Apps Script-saker berøres ikke (originalens logikk gjelder for dem).
+ */
 function opoint_kj_settOppfolging(saker, vindu) {
-  var n = 0;
+  var n = 0, startDag = opoint_kj_osloDag(vindu.oldest);
   saker.forEach(function (sak) {
-    var tidligst = Infinity;
+    var tidligst = Infinity, urlDag = '', urlFra = '';
     sak.medlemmer.forEach(function (m) {
       var docs = [m.doc].concat((m.slattSammen || []).map(function (x) { return x.doc; }));
       var idd = m.doc.identical_documents && Array.isArray(m.doc.identical_documents.document) ? m.doc.identical_documents.document : [];
-      docs.concat(idd).forEach(function (doc) { if (doc && typeof doc.unix_timestamp === 'number' && doc.unix_timestamp < tidligst) tidligst = doc.unix_timestamp; });
+      docs.concat(idd).forEach(function (doc) {
+        if (!doc) return;
+        if (typeof doc.unix_timestamp === 'number' && doc.unix_timestamp < tidligst) tidligst = doc.unix_timestamp;
+        var u = opoint_t3_artikkelUrl(doc), dg = opoint_kj_urlDato(u);
+        if (dg && (!urlDag || dg < urlDag)) { urlDag = dg; urlFra = u; }
+      });
+      (m.asTreffListe || []).forEach(function (t) { var dg = opoint_kj_urlDato(t.lenke); if (dg && (!urlDag || dg < urlDag)) { urlDag = dg; urlFra = t.lenke; } });
     });
     sak.tidligst = tidligst === Infinity ? '' : tidligst;
-    sak.oppfolging = tidligst !== Infinity && tidligst < vindu.oldest;
+    sak.urlDato = urlDag;
+    sak.oppfolging = false; sak.oppfolgingGrunn = '';
+    if (sak.asTreff) return;
+    if (tidligst !== Infinity && tidligst < vindu.oldest) { sak.oppfolging = true; sak.oppfolgingGrunn = 'Eldste artikkel før vinduet'; }
+    else if (urlDag && urlDag < startDag) { sak.oppfolging = true; sak.oppfolgingGrunn = 'Dato i URL (' + urlDag + ') før vinduet: ' + opointKort(urlFra, 90); }
     if (sak.oppfolging) n++;
   });
   return n;
@@ -1571,8 +1789,12 @@ var OPOINT_KJ_OMTALT_SYSTEM =
   'Du sjekker om nye nyhetssaker allerede er omtalt i en tidligere utsendt medieovervåking. Du får NYE saker (nummerert, ' +
   'overskrift og ingress) og TIDLIGERE saker (merket T-nummer, bare overskrift). En ny sak er omtalt tidligere bare hvis ' +
   'den gjelder samme konkrete hendelse eller kunngjøring (samme kontrakt, levering, bestilling, tildeling, rapport eller ' +
-  'vedtak), også på et annet språk. Samme selskap eller tema er ikke nok. Er du i tvil: ikke merk.\n\nSvar KUN med JSON, ' +
-  'uten kodeblokk: {"treff": [{"ny": 3, "tidligere": "T12"}]}. Ingen treff: {"treff": []}.';
+  'vedtak), også på et annet språk. Samme selskap eller tema er ikke nok. Er du i tvil: ikke merk.\n\nFor hvert treff: ' +
+  '"nytt" er én kort linje på norsk (maks 15 ord) om KONKRET ny informasjon i den nye saken som ikke står i den tidligere ' +
+  '(f.eks. skipsnavn, beløp, dato, levering, vedtak, ny part). Omformuleringer, gjengivelser og bakgrunn er ikke nytt. ' +
+  'Ingen ny informasjon (eller tvil): tom streng.\n\nSvar KUN med JSON, uten kodeblokk: ' +
+  '{"treff": [{"ny": 3, "tidligere": "T12", "nytt": ""}]}. Ingen treff: {"treff": []}. Bruk aldri doble anførselstegn (") ' +
+  'inne i tekstene – bruk «» i stedet.';
 
 // DEL D: historikk for Oppfølging/Omtalt tidligere (opprettes av FellesTest.gs)
 var OPOINT_FANE_SENDTE_SAKER = 'Sendte saker';
@@ -1599,10 +1821,19 @@ function opoint_kj_sendteSakerFraRader(data, fraMs, tilMs) {
   return ut;
 }
 
-/** Leser tidligere sendte saker: «Sendte saker» hvis fanen finnes, ellers "Sendte artikler" (kun lesing). */
+/**
+ * Leser tidligere sendte saker (kun lesing): «Sendte saker» OG "Sendte artikler" (Apps Script-
+ * utsendelser). Rettelse 1: før ble "Sendte artikler" bare brukt når «Sendte saker» ikke fantes;
+ * nå slås de sammen (samme URL bare én gang, «Sendte saker» først).
+ */
 function opoint_kj_lesSendte(ss, fraMs, tilMs) {
-  var fraSaker = opoint_kj_lesSendteSaker(ss, fraMs, tilMs);
-  if (fraSaker !== null) return fraSaker;
+  var fraSaker = opoint_kj_lesSendteSaker(ss, fraMs, tilMs) || [];
+  var sett = {};
+  fraSaker.forEach(function (r) { if (r.norm) sett[r.norm] = true; (r.normer || []).forEach(function (n) { sett[n] = true; }); });
+  return fraSaker.concat(opoint_kj_lesSendteArtikler(ss, fraMs, tilMs).filter(function (r) { return !r.norm || !sett[r.norm]; }));
+}
+
+function opoint_kj_lesSendteArtikler(ss, fraMs, tilMs) {
   var ark = ss.getSheetByName(OPOINT_KJOR_FANE_SENDTE);
   if (!ark || ark.getLastRow() < 2) return [];
   var data = ark.getDataRange().getValues();
@@ -1617,17 +1848,24 @@ function opoint_kj_lesSendte(ss, fraMs, tilMs) {
   return ut;
 }
 
+/**
+ * Rettelse 1: «Omtalt tidligere» er nå en del av Oppfølging. Samme hendelse sendt siste
+ * 7 dager (samme URL, eller KI: samme konkrete hendelse) → sak.oppfolging = true (ikke i
+ * e-posten), UNNTATT når KI finner konkret ny informasjon → sak.oppdatering = {nytt, tittel}
+ * (vises som «Oppdatering» med én linje om hva som er nytt). Apps Script-saker berøres ikke.
+ */
 function opoint_kj_settOmtaltTidligere(saker, sendte, tjeneste) {
-  var ut = { url: 0, ki: 0, melding: '' };
-  var aktive = saker.filter(function (s) { return !s.sprakEkskludert && !s.oppfolging; });
+  var ut = { url: 0, ki: 0, oppdatering: 0, melding: '' };
+  var aktive = saker.filter(function (s) { return !s.sprakEkskludert && !s.oppfolging && !s.asTreff; });
+  var settOpp = function (sak, grunn) { sak.oppfolging = true; sak.oppfolgingGrunn = grunn; };
   aktive.forEach(function (sak) {
-    sak.omtaltTidligere = '';
+    sak.omtaltTidligere = ''; sak.oppdatering = null;
     var docs = [];
     sak.medlemmer.forEach(function (m) { docs.push(m.doc); (m.slattSammen || []).forEach(function (x) { docs.push(x.doc); }); });
     docs.some(function (doc) {
       var norm = opoint_kj_normUrl(opoint_t3_artikkelUrl(doc));
       var t = norm ? sendte.filter(function (r) { return r.norm === norm || (r.normer && r.normer.indexOf(norm) >= 0); })[0] : null;
-      if (t) { sak.omtaltTidligere = 'URL: «' + opointKort(t.tittel, 80) + '»'; ut.url++; }
+      if (t) { sak.omtaltTidligere = 'URL: «' + opointKort(t.tittel, 80) + '»'; settOpp(sak, 'Sendt før (samme URL): «' + opointKort(t.tittel, 80) + '»'); ut.url++; }
       return !!t;
     });
   });
@@ -1643,7 +1881,7 @@ function opoint_kj_settOmtaltTidligere(saker, sendte, tjeneste) {
   for (var s = 0; s < rest.length; s += OPOINT_KJ_OMTALT_PER_KALL) {
     var bit = rest.slice(s, s + OPOINT_KJ_OMTALT_PER_KALL);
     var nye = bit.map(function (sak, i) {
-      var d0 = sak.representant.doc, ing = opoint_kj_ingress(d0);
+      var d0 = opoint_kj_visDoc(sak), ing = opoint_kj_sakIngress(sak).tekst;
       return (i + 1) + ' ' + opointTekstFelt(d0.header).replace(/\s+/g, ' ').trim() + (ing ? ' || ' + opointKort(ing, 200) : '');
     }).join('\n');
     var tekst = 'NYE:\n' + nye + '\n\nTIDLIGERE:\n' + tidl;
@@ -1660,10 +1898,15 @@ function opoint_kj_settOmtaltTidligere(saker, sendte, tjeneste) {
     o.treff.forEach(function (x) {
       var n = Number(x && x.ny), ti = Number(String(x && x.tidligere || '').replace(/^T/i, ''));
       var sak = bit[n - 1], r = sendteListe[ti - 1];
-      if (sak && r && !sak.omtaltTidligere) { sak.omtaltTidligere = 'KI: «' + opointKort(r.tittel, 80) + '»'; ut.ki++; }
+      if (!sak || !r || sak.omtaltTidligere) return;
+      sak.omtaltTidligere = 'KI: «' + opointKort(r.tittel, 80) + '»'; ut.ki++;
+      var nytt = typeof x.nytt === 'string' ? x.nytt.replace(/\s+/g, ' ').trim() : '';
+      if (nytt) { sak.oppdatering = { nytt: nytt, tittel: r.tittel }; ut.oppdatering++; }
+      else settOpp(sak, 'Sendt før (KI, samme hendelse): «' + opointKort(r.tittel, 80) + '»');
     });
   }
-  ut.melding = 'URL-treff ' + ut.url + ', KI-treff ' + ut.ki + ' (mot ' + sendteListe.length + ' sendte saker siste ' + OPOINT_KJ_OMTALT_DAGER + ' dager).' + ut.melding;
+  ut.melding = 'URL-treff ' + ut.url + ', KI-treff ' + ut.ki + ' (herav ' + ut.oppdatering + ' «Oppdatering», resten Oppfølging) mot ' +
+    sendteListe.length + ' sendte saker siste ' + OPOINT_KJ_OMTALT_DAGER + ' dager.' + ut.melding;
   return ut;
 }
 
@@ -1824,11 +2067,11 @@ function opoint_kj_sakStatus(sak) {
   if (!sak) return '';
   var r = sak.kiResultat || {};
   if (sak.sprakEkskludert) return 'Ekskludert: språk (' + sak.sprakEkskludert + ')';
-  if (sak.oppfolging) return 'Oppfølging (ikke i e-posten)';
+  if (sak.oppfolging) return 'Oppfølging (ikke i e-posten)' + (sak.oppfolgingGrunn ? ': ' + sak.oppfolgingGrunn : '');
   if (r.tvil) return 'Tvil (KI-svar kunne ikke tolkes)';
   if (r.relevant === false) return 'Mulig irrelevant: ' + (r.irrelevantGrunn || '');
   if (r.relevant === true) return { 'høy': 'I e-posten (høy)', middels: 'I «Ellers i bransjen» (middels)', lav: 'Lav (bare i fanen)' }[r.prioritet || 'middels'] +
-    (sak.omtaltTidligere ? ' – omtalt tidligere' : '');
+    (sak.oppdatering ? ' – Oppdatering: ' + sak.oppdatering.nytt : '');
   return 'Ikke vurdert';
 }
 
@@ -1896,7 +2139,7 @@ function opoint_kj_settDagensEpost(saker, apps, vindu, dagTekst) {
 // Del 3: «Ellers i bransjen» – ett KI-sammendrag av middels-sakene
 // ---------------------------------------------------------------------
 
-var OPOINT_KJ_SAMMENDRAG_MAX_TOKENS = 600;
+var OPOINT_KJ_SAMMENDRAG_MAX_TOKENS = 1500; // rettelse 6: 600 ga max_tokens 19. og 20. nov (begge forsøk)
 var OPOINT_KJ_SAMMENDRAG_MAKS_SETNINGER = 5;
 var OPOINT_KJ_SAMMENDRAG_MAKS_ORD = 120;
 var OPOINT_KJ_SAMMENDRAG_SYSTEM =
@@ -1937,7 +2180,13 @@ function opoint_kj_sammendragInndata(saker) {
 /** Tolker og strammer inn: maks 5 setninger, maks 120 ord, gyldig saksnummer. null ved parsefeil. */
 function opoint_kj_tolkSammendrag(tekst, inndata) {
   var o = opoint_kj_parseJson(tekst);
-  if (!o || !Array.isArray(o.setninger)) return null;
+  if (!o || !Array.isArray(o.setninger)) {
+    // Rettelse 6: avkuttet svar (max_tokens) – berg de hele setningene som står før kuttet
+    var re = /\{\s*"tekst"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"sak"\s*:\s*(\d+)\s*\}/g, m, liste = [];
+    while ((m = re.exec(String(tekst || ''))) !== null) { try { liste.push({ tekst: JSON.parse('"' + m[1] + '"'), sak: Number(m[2]) }); } catch (e) { /* hopp over */ } }
+    if (!liste.length) return null;
+    o = { setninger: liste };
+  }
   var ut = [], ord = 0;
   for (var i = 0; i < o.setninger.length && ut.length < OPOINT_KJ_SAMMENDRAG_MAKS_SETNINGER; i++) {
     var x = o.setninger[i] || {};
@@ -1962,7 +2211,7 @@ function opoint_kj_lagSammendrag(saker, tjeneste) {
   var t = sv.ok ? opoint_kj_tolkSammendrag(sv.tekst, inndata) : null;
   if (sv.ok && !t) {
     tjeneste.loggParseFeil('sammendrag', sv, 1);
-    sv = tjeneste.sporMange([{ type: 'samm2', system: OPOINT_KJ_SAMMENDRAG_SYSTEM, tekst: tekst, maxTokens: OPOINT_KJ_SAMMENDRAG_MAX_TOKENS }])[0];
+    sv = tjeneste.sporMange([{ type: 'samm2', system: OPOINT_KJ_SAMMENDRAG_SYSTEM, tekst: tekst, maxTokens: 2 * OPOINT_KJ_SAMMENDRAG_MAX_TOKENS }])[0];
     t = sv.ok ? opoint_kj_tolkSammendrag(sv.tekst, inndata) : null;
     if (sv.ok && !t) tjeneste.loggParseFeil('sammendrag', sv, 2);
     if (t) ut.reddet = 1;
@@ -2130,7 +2379,8 @@ function opoint_kj_byggEpost(saker, sm, vindu, fmtSek, harLogo, st, resultater, 
     if (andre) notat.push(andre);
     var opph = sak && sak.harOp ? 'AS+OP' : 'AS';
     var kat = t.aiNevnerOss ? 'Om oss' : (x.kategori || 'Ukategorisert');
-    leggTil(kat, Object.assign({}, t, { kilde: merk(t.kilde, opph), aiNotat: notat.join(' · ') }),
+    var ing = sak ? opoint_kj_visSakIngress(sak) : opoint_kj_vurderIngress(t.ingress).tekst;
+    leggTil(kat, Object.assign({}, t, { ingress: ing || t.ingress, kilde: merk(t.kilde, opph), aiNotat: notat.join(' · ') }),
       { opphav: opph, tittel: t.tittel, url: t.lenke, prioritet: t.aiRelevant === false ? 'irrelevant' : 'AS', sak: sak ? sak.id : '' });
   });
   // Opoint
@@ -2163,17 +2413,17 @@ function opoint_kj_byggEpost(saker, sm, vindu, fmtSek, harLogo, st, resultater, 
     antHoy++;
     var k = sak.representant, dv = opoint_kj_visDoc(sak);
     var notat = [];
+    if (sak.oppdatering) notat.push('Oppdatering: ' + sak.oppdatering.nytt + ' (sendt før: «' + opointKort(sak.oppdatering.tittel, 70) + '»)');
     if (r.notat) notat.push(r.notat);
     var andre = opoint_kj_andreKilderTekst(sak);
     if (andre) notat.push(andre);
     if (sak.iDagensEpost) notat.push('Også i dagens e-post');
-    if (sak.omtaltTidligere) notat.push('Omtalt tidligere');
     leggTil(sak.fastRelevant ? 'Om oss' : (r.kategori || 'Annet'), {
       tittel: opointTekstFelt(dv.header).replace(/\s+/g, ' ').trim(), lenke: opoint_t3_artikkelUrl(dv),
       ingress: opoint_kj_visSakIngress(sak), kilde: merk(opoint_kj_kildeNavn(k), 'OP'), matchendeOrd: opoint_kj_sokeordFor(sak),
       aiRelevant: true, aiKategori: r.kategori, aiNevnerOss: !!r.nevnerOss, aiNotat: notat.join(' · '),
       aiIrrelevantGrunn: '', aiSammendrag: '' },
-      { opphav: 'OP', tittel: opointTekstFelt(dv.header), url: opoint_t3_artikkelUrl(dv), prioritet: 'høy', sak: sak.id });
+      { opphav: 'OP', tittel: opointTekstFelt(dv.header), url: opoint_t3_artikkelUrl(dv), prioritet: 'høy', sak: sak.id, oppdatering: !!sak.oppdatering });
   });
   var aiStat = { stoppetTidlig: false, stoppArsak: '', feil: [] };
   var html = byggEpostHtmlMerkevare(treffPerKategori, 0, 0, 0, [], aiStat, !!harLogo);
@@ -2181,8 +2431,8 @@ function opoint_kj_byggEpost(saker, sm, vindu, fmtSek, harLogo, st, resultater, 
   // A3: erstatt originalens kildelinje
   var res = resultater || [];
   var linje = (o.headerAs || 'Apps Script: ikke kjørt') + ' · ' + (o.headerOp ||
-    ('Opoint: OK (' + res.length + ' spørringer, ' + (st && st.dokumenter !== undefined ? st.dokumenter : '?') + ' dokumenter, ' +
-      (st && st.grupper !== undefined ? st.grupper : '?') + ' grupper)'));
+    ('Opoint: OK (' + res.length + ' søk, ' + (st && st.dokumenter !== undefined ? st.dokumenter : '?') + ' artikler, ' +
+      (st && st.grupper !== undefined ? st.grupper : '?') + ' saker)'));
   html = html.replace('0 av 0 kilder hentet OK.', escapeHtml(linje));
   tekst = tekst.replace('0 av 0 kilder hentet OK.', linje);
   // A5: lenkelister for IMO-kortene
@@ -3971,6 +4221,16 @@ var OPOINT_KJ_RECALL_FASIT = {
     { kilde: 'Routine', navn: 'Eastern Pacific Terra Clove ammoniakk-VLAC (Hydrogen Central)', domene: 'hydrogen-central.com', ord: ['terra clove'] },
     { kilde: 'Routine', navn: 'LR «Fuel for Thought: Ports» (Cyprus Shipping News)', domene: 'cyprusshippingnews.com', ord: ['fuel for thought'] },
     { kilde: 'Routine', navn: 'CIMAC calls for global IMO NZF (MarineLink)', domene: 'marinelink.com', ord: ['cimac'] }
+  ] },
+  '20': { start: '2026-11-19 07:30', slutt: '2026-11-20 07:30', saker: [
+    { kilde: 'Routine', navn: 'Splash247: Will shipping get its solar moment?', domene: 'splash247.com', ord: ['solar moment'] },
+    { kilde: 'Routine', navn: 'Econowind turns ten (il nautilus)', domene: 'ilnautilus.it', ord: ['econowind'] },
+    { kilde: 'Routine', navn: 'WorldCargo News: Port of Bilbao OPS', domene: 'worldcargonews.com', ord: ['bilbao'] },
+    { kilde: 'Routine', navn: 'Baird Maritime: Illinois begins electric ferry procurement', domene: 'bairdmaritime.com', ord: ['illinois'] },
+    { kilde: 'Routine', navn: 'Smart Maritime Network: Qingdao electric remote-controlled container ship', domene: 'smartmaritimenetwork.com', ord: ['qingdao'] },
+    { kilde: 'Routine', navn: 'Offshore Energy: methanol-ready OESV launches in China (Sea1 Citrine)', domene: 'offshore-energy.biz', ord: ['methanol-ready', 'china'] },
+    { kilde: 'Routine', navn: 'Offshore Energy: Purus takes delivery of methanol-ready Damen CSOV', domene: 'offshore-energy.biz', ord: ['purus'] },
+    { kilde: 'Routine', navn: 'IMO NZF: ni organisasjoners uttalelse (Cyprus Shipping News)', domene: 'cyprusshippingnews.com', ord: ['net-zero'] }
   ] },
   '18': { start: '2026-11-17 07:30', slutt: '2026-11-18 07:30', saker: [
     { kilde: 'Apps Script', navn: 'SSI «blue shipping corridors» (Hellenic Shipping News)', domene: 'hellenicshippingnews.com', ord: ['blue', 'corridor'] },

@@ -71,7 +71,7 @@ assert.strictEqual(f.opoint_kj_imoVinkling(si, tjI, { oldest: 1, newest: 2 }).gr
 f.OPOINT_IMO_SAMLING = 'vinkling';
 
 // --- A1 + A3: header og telling ---
-assert.ok(ep.html.includes('Apps Script: ikke kjørt · Opoint: OK (2 spørringer, 5 dokumenter, 5 grupper)'));
+assert.ok(ep.html.includes('Apps Script: ikke kjørt · Opoint: OK (2 søk, 5 artikler, 5 saker)'));
 
 // --- DEL B: vindu ---
 const parse = s2 => new Date(Date.parse(s2.replace(' ', 'T') + ':00+01:00'));
@@ -111,7 +111,7 @@ const as = { treff: asTreff, kategori: { [asTreff[0].lenke]: 'Hydrogen', [asTref
   ok: 48, totalt: 50, feilet: ['Kilde A', 'Kilde B'], hoppet: 0 };
 const op = { ok: true, forb: { kandidater: kk, resultater: [{}, {}, {}], klient: { antall: () => 3 }, oppsett: { merknader: [] } }, saker: sk, ki: { kall: 0 }, sm: null };
 const fe = f.opoint_ft_byggFellesEpost(as, op, { oldest: 1, newest: 2 }, { fmtSek: fmt }, ['Sammendrag utelatt (tid)']);
-assert.ok(fe.html.includes('Apps Script: 48 av 50 kilder hentet OK. 2 feilet: Kilde A, Kilde B · Opoint: OK (3 spørringer'));
+assert.ok(fe.html.includes('Apps Script: 48 av 50 kilder hentet OK. 2 feilet: Kilde A, Kilde B · Opoint: OK (3 søk'));
 assert.ok(fe.html.includes('Google Alerts [AS+OP]') && fe.html.includes('E24 [AS+OP]') && fe.html.includes('MC [AS]'));
 assert.ok(fe.html.includes('Om oss')); // Nevner oss → Om oss
 assert.ok(fe.html.includes('Mulig irrelevant</div>') && fe.html.includes('Ikke prosjektet GASS')); // A1: AS-irrelevant vises
