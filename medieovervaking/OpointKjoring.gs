@@ -64,6 +64,11 @@ var OPOINT_KJOR_FANE_KILDEPRIORITET = 'Kildeprioritet';
 var OPOINT_KJOR_MAX_HTTP = 80;
 var OPOINT_KJOR_MAX_VURDERT = 200;
 var OPOINT_KJOR_EKSKLUDER_DOMENER = ['headtopics.com'];
+// Felles-prompt DEL 1c: ingen meta-språk i KI-notat, oppsummering og sammendrag (legges i alle skrivende prompter)
+var OPOINT_KJ_INGEN_META = ' Ingen meta-språk: skriv direkte om saken, aldri om kilden eller teksten. Ordene «ingressen», ' +
+  '«overskriften», «artikkelen», «teksten» og uttrykket «er nevnt i» er forbudt. Feil: «LowNoiser-prosjektet er nevnt i ' +
+  'ingressen.» Riktig: si hva prosjektet eller aktøren gjør, slik det står i saken.';
+var OPOINT_KJ_META_RE = /\b(?:ingressen|overskriften|artikkelen|teksten)\b|\ber nevnt i\b/i;
 
 var OPOINT_KJOR_REQUESTED = 25;
 var OPOINT_KJOR_MAKS_BATCHER = 4;
@@ -1341,7 +1346,7 @@ function opoint_kj_lagSaker(kandidater, grupper) {
 // ---------------------------------------------------------------------
 
 var OPOINT_KJ_PRIORITETER = ['høy', 'middels', 'lav'];
-var OPOINT_KJ_KI_PROMPTVERSJON = 'opoint-4'; // opoint-4: strengere «høy» (rettelse 5); opoint-3: flere saker per kall, prioritet_grunn, IMO NZF
+var OPOINT_KJ_KI_PROMPTVERSJON = 'opoint-5'; // opoint-5: ingen meta-språk (felles-prompt 1c); // opoint-4: strengere «høy» (rettelse 5); opoint-3: flere saker per kall, prioritet_grunn, IMO NZF
 var OPOINT_KJ_KI_MAX_TOKENS = 600;           // per enkeltsak; et kall med n saker får 150·n + 250 (min. 400)
 var OPOINT_KJ_REL_PER_KALL = 8;              // saker per relevanskall (holder seg under 80 kall for en hel dag)
 var OPOINT_KJ_NZF_SLUTT = Date.UTC(2026, 11, 4, 23, 0); // MEPC 85 avsluttet 4. des 2026 (Oslo-tid)
@@ -1384,7 +1389,7 @@ function opoint_kj_kiSystem(vindu) {
     'ord, konkret. Tom streng når relevant er true.\n\n"notat" er normalt tom streng. Skriv bare et notat (maks én ' +
     'setning, maks 20 ord, norsk) hvis teksten har konkret informasjon som krever oppfølging (beløp, frister, vedtak, ' +
     'en konkurrent). Kommenter ALDRI at ingressen er avkuttet, kort, tynn eller mangler informasjon, og si aldri at ' +
-    'saken er relevant.\n\n' + opoint_kj_prioritetRegler(vindu) + '\n\nSvar KUN med JSON, uten kodeblokk og uten annen ' +
+    'saken er relevant.' + OPOINT_KJ_INGEN_META + '\n\n' + opoint_kj_prioritetRegler(vindu) + '\n\nSvar KUN med JSON, uten kodeblokk og uten annen ' +
     'tekst: {"saker": [{"nr": 1, "relevant": true/false, "kategori": "...", "nevner_oss": true/false, ' +
     '"prioritet": "høy"/"middels"/"lav", "prioritet_grunn": "...", "irrelevant_grunn": "...", "notat": ""}]}. ' +
     'Ta med alle sakene. Bruk aldri doble anførselstegn (") inne i tekstverdiene – bruk «» i stedet.';
@@ -1537,7 +1542,7 @@ var OPOINT_KJ_OPPS_SYSTEM =
   'Du skriver en kort ingress på norsk for nyhetssaker i en medieovervåking. Du får nummererte saker med overskrift og ' +
   'ingresstekst (kan være avkuttet eller rotete). Skriv 1–2 setninger (maks 40 ord) per sak, KUN basert på overskriften og ' +
   'ingressteksten: ingen tall, navn, steder eller årsaker som ikke står der, ingen vurderinger og ingen kommentarer om ' +
-  'teksten.\n\nSvar KUN med JSON, uten kodeblokk: {"saker": [{"nr": 1, "oppsummering": "..."}]}. Bruk aldri doble ' +
+  'teksten.' + OPOINT_KJ_INGEN_META + '\n\nSvar KUN med JSON, uten kodeblokk: {"saker": [{"nr": 1, "oppsummering": "..."}]}. Bruk aldri doble ' +
   'anførselstegn (") inne i tekstene – bruk «» i stedet.';
 
 /** Saker som får eget kort i e-posten (samme regler som opoint_kj_byggEpost). */
@@ -1851,7 +1856,7 @@ var OPOINT_KJ_OMTALT_SYSTEM =
   'vedtak), også på et annet språk. Samme selskap eller tema er ikke nok. Er du i tvil: ikke merk.\n\nFor hvert treff: ' +
   '"nytt" er én kort linje på norsk (maks 15 ord) om KONKRET ny informasjon i den nye saken som ikke står i den tidligere ' +
   '(f.eks. skipsnavn, beløp, dato, levering, vedtak, ny part). Omformuleringer, gjengivelser og bakgrunn er ikke nytt. ' +
-  'Ingen ny informasjon (eller tvil): tom streng.\n\nSvar KUN med JSON, uten kodeblokk: ' +
+  'Ingen ny informasjon (eller tvil): tom streng.' + OPOINT_KJ_INGEN_META + '\n\nSvar KUN med JSON, uten kodeblokk: ' +
   '{"treff": [{"ny": 3, "tidligere": "T12", "nytt": ""}]}. Ingen treff: {"treff": []}. Bruk aldri doble anførselstegn (") ' +
   'inne i tekstene – bruk «» i stedet.';
 
@@ -2207,7 +2212,7 @@ var OPOINT_KJ_SAMMENDRAG_SYSTEM =
   ' ord til sammen, på flytende norsk. Hver setning bygger på nøyaktig én sak og oppgir nummeret til den. Bruk bare ' +
   'det som står i overskriften og ingressen: ingen tall, navn, steder eller årsaker som ikke står der, ingen vurderinger ' +
   'og ingen kommentarer om at teksten er kort eller avkuttet. Velg de viktigste sakene hvis det er flere enn ' +
-  OPOINT_KJ_SAMMENDRAG_MAKS_SETNINGER + '.\n\nSvar KUN med JSON, uten kodeblokk: {"setninger": [{"tekst": "...", "sak": 1}]}. ' +
+  OPOINT_KJ_SAMMENDRAG_MAKS_SETNINGER + '.' + OPOINT_KJ_INGEN_META + '\n\nSvar KUN med JSON, uten kodeblokk: {"setninger": [{"tekst": "...", "sak": 1}]}. ' +
   'Bruk aldri doble anførselstegn (") inne i tekstene – bruk «» i stedet.';
 
 /**
@@ -2322,7 +2327,7 @@ var OPOINT_IMO_SYSTEM =
   '(beslutning, uttalelse fra bransjeorganisasjon før MEPC 85, norsk aktør), ellers "middels" (evergreen, «explained», ' +
   'analyse uten ny informasjon), og "begrunnelse" (én linje).\n\nSvar KUN med JSON, uten kodeblokk: {"grupper": ' +
   '[{"vinkling": "...", "overskrift": "...", "oppsummering": "...", "aktorer": ["..."], "prioritet": "høy", ' +
-  '"begrunnelse": "...", "saker": [1, 3]}]}. Bruk aldri doble anførselstegn (") inne i tekstene – bruk «» i stedet.';
+  '"begrunnelse": "...", "saker": [1, 3]}]}.' + OPOINT_KJ_INGEN_META + ' Bruk aldri doble anførselstegn (") inne i tekstene – bruk «» i stedet.';
 
 function opoint_kj_imoAktiv(vindu) {
   if (OPOINT_IMO_SAMLING !== 'vinkling') return false;

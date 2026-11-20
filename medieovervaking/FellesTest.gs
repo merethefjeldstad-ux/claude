@@ -611,7 +611,7 @@ var KONTROLL_SYSTEM =
   'For hvert kort: (a) er ingressen sammenhengende og handler den om det tittelen sier (ingen nettside-tekst, cookie-/' +
   'abonnementstekst eller navigasjon)? (b) er tittel og ingress konsistente? (c) er kortet TYDELIG irrelevant for Maritime ' +
   'CleanTech? (d) skrive- eller språkfeil i KI-notatet (norsk)? For sammendraget: (e) kan hver setning belegges i tittel + ' +
-  'ingress for den oppgitte kilden? (d) språkfeil? (f) dobbeltkort for samme sak, og stemmer tallene i headeren med kortene?\n\n' +
+  'ingress for den oppgitte kilden? (d) språkfeil eller meta-språk («ingressen», «overskriften», «artikkelen», «teksten», «er nevnt i»)? (f) dobbeltkort for samme sak, og stemmer tallene i headeren med kortene?\n\n' +
   'Forslag: "bytt_ingress" (ingressen er dårlig, prøv en annen artikkel i gruppen), "bruk_KI_notat" (bruk en kort ' +
   'KI-oppsummering som ingress), "fjern_kort" (bare når kortet er tydelig irrelevant eller et dobbeltkort), "fjern_setning" ' +
   '(sammendragssetning som ikke kan belegges), "ingen" (bare merknad). alvorlighet: "kritisk" eller "merknad". ' +
@@ -663,11 +663,15 @@ function opoint_ft_kontrollLes(innhold) {
   ep.kort.forEach(function (k) {
     var sp = opoint_kj_soppel(k.ingress);
     if (sp) byttIngress(k, 'regel', 'Søppelmønster i ingressen: ' + sp, 'kritisk');
+    var notatUtenKilder = String(k.notat || '').split(' · ').filter(function (x) { return !/^Andre kilder/.test(x); }).join(' · ');
+    if (OPOINT_KJ_META_RE.test(notatUtenKilder)) logg(k, 'regel', 'Meta-språk i KI-notatet', 'merknad', 'ingen', 'bare logget', notatUtenKilder, '');
+    if (OPOINT_KJ_META_RE.test(k.ingress) && /\(oppsummert\)$/.test(k.ingress)) logg(k, 'regel', 'Meta-språk i KI-oppsummeringen', 'merknad', 'ingen', 'bare logget', k.ingress, '');
     var spT = opoint_kj_soppel(k.tittel);
     if (spT) logg(k, 'regel', 'Søppelmønster i tittelen: ' + spT, 'merknad', 'ingen', 'bare logget', k.tittel, '');
   });
   // Steg 2: KI
   var setn = ep.setningerVist || [];
+  setn.forEach(function (x, i) { if (OPOINT_KJ_META_RE.test(x.tekst)) logg({ id: 'S' + (i + 1), tittel: '«Ellers i bransjen»' }, 'regel', 'Meta-språk i sammendraget', 'merknad', 'ingen', 'bare logget', x.tekst, ''); });
   var inndataFor = {};
   ((innhold.sm && innhold.sm.inndata) || []).forEach(function (x) { inndataFor[x.sak] = x; });
   var kortLinje = function (k) {

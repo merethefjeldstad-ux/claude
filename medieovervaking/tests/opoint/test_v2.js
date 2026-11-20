@@ -123,3 +123,17 @@ const rb2 = f.opoint_ft_raderBeholdt(as, op, fe);
 assert.ok(rb2.some(r => r[0] === 'beholdt' && r[3] === 'Apps Script (Mulig irrelevant)'));
 console.log('DEL 5 OK');
 console.log('Alle v2-tester OK');
+
+// ---- Felles-prompt DEL 1c: ingen meta-språk ----
+(function () {
+  ['opoint_kj_kiSystem'].forEach(n => assert.ok(f[n]({ oldest: 1, newest: 2 }).includes('«er nevnt i» er forbudt')));
+  [f.OPOINT_KJ_OPPS_SYSTEM, f.OPOINT_KJ_SAMMENDRAG_SYSTEM, f.OPOINT_IMO_SYSTEM, f.OPOINT_KJ_OMTALT_SYSTEM].forEach(p => assert.ok(p.includes('Ingen meta-språk')));
+  assert.ok(f.OPOINT_KJ_META_RE.test('LowNoiser-prosjektet er nevnt i ingressen.')); assert.ok(f.OPOINT_KJ_META_RE.test('Artikkelen beskriver …'));
+  assert.ok(!f.OPOINT_KJ_META_RE.test('LowNoiser samler 15 partnere fra industri og forskning.'));
+  const s = f.opoint_kj_lagSaker(f.opoint_kj_dedup([{ strom: 'B', navn: 'B', searchterm: 'b', dokumenter: [doc({ id_article: 70, orig_url: 'https://m.com/1', header: { text: 'LowNoiser' }, summary: { text: 'LowNoiser brings together fifteen partners from industry and research to reduce underwater noise from ships.' } })] }], [], prio), null);
+  s[0].kiResultat = { relevant: true, prioritet: 'høy', kategori: 'Annet', notat: 'LowNoiser-prosjektet er nevnt i ingressen.' };
+  const ep = f.opoint_kj_byggEpost(s, { setninger: [{ tekst: 'Artikkelen handler om støy.', sak: 'S1', url: 'u', kilde: 'M' }], inndata: [] }, vindu, fmt, false, {}, [], {});
+  const kl = f.opoint_ft_kontrollLes({ epost: ep, saker: s, sm: null, tjeneste: lagTj(() => '{"funn": []}'), vindu, d: { fmtSek: fmt } });
+  assert.ok(kl.logg.some(x => x.problem === 'Meta-språk i KI-notatet') && kl.logg.some(x => x.problem === 'Meta-språk i sammendraget'));
+  console.log('Felles-prompt 1c OK');
+})();

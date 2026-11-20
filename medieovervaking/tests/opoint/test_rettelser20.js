@@ -113,7 +113,7 @@ console.log('2 Egne vinkler OK');
 // ---- 5: prioritet ----
 const regler = f.opoint_kj_prioritetRegler(vindu);
 assert.ok(regler.includes('"høy" KUN når') && regler.includes('regionale eller kommunale prosjekter uten norsk kobling') && regler.includes('jubileer'));
-assert.ok(regler.includes('IMO Net-Zero Framework')); assert.strictEqual(f.OPOINT_KJ_KI_PROMPTVERSJON, 'opoint-4');
+assert.ok(regler.includes('IMO Net-Zero Framework')); assert.strictEqual(f.OPOINT_KJ_KI_PROMPTVERSJON, 'opoint-5');
 console.log('5 Prioritet OK');
 
 // ---- 6: sammendrag: avkuttet svar berges, større max_tokens ----
