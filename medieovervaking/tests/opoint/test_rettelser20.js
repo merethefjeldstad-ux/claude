@@ -47,7 +47,7 @@ assert.strictEqual(ss2[0].oppfolging, true); assert.strictEqual(ss2[1].oppfolgin
 assert.ok(tjOm.kallListe[0].system.includes('"nytt"'));
 ss2[1].kiResultat = { relevant: true, prioritet: 'høy', kategori: 'Energi og framdrift' };
 const ep0 = f.opoint_kj_byggEpost(ss2, null, vindu, fmt, false, {}, []);
-assert.ok(ep0.html.includes('Oppdatering: Skipet har fått navnet Izanami')); assert.ok(!ep0.html.includes('AYK Energy wins'));
+assert.ok(ep0.html.includes('Nytt: Skipet har fått navnet Izanami') && ep0.html.includes('Oppdatering av sak sendt')); assert.ok(!ep0.html.includes('AYK Energy wins'));
 console.log('1 Oppfølging OK');
 
 // ---- 3: ingress-rens og beste ingress ----
@@ -113,7 +113,7 @@ console.log('2 Egne vinkler OK');
 // ---- 5: prioritet ----
 const regler = f.opoint_kj_prioritetRegler(vindu);
 assert.ok(regler.includes('"høy" KUN når') && regler.includes('regionale eller kommunale prosjekter uten norsk kobling') && regler.includes('jubileer'));
-assert.ok(regler.includes('IMO Net-Zero Framework')); assert.strictEqual(f.OPOINT_KJ_KI_PROMPTVERSJON, 'opoint-5');
+assert.ok(regler.includes('IMO Net-Zero Framework')); assert.strictEqual(f.OPOINT_KJ_KI_PROMPTVERSJON, 'opoint-6');
 console.log('5 Prioritet OK');
 
 // ---- 6: sammendrag: avkuttet svar berges, større max_tokens ----

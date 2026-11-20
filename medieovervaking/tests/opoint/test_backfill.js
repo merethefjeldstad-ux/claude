@@ -129,7 +129,7 @@ console.log('Apps Script fra sendte artikler OK');
 assert.deepStrictEqual(J(f.opoint_ft_nesteBackfill({})), { dag: '2026-11-16', forste: true, siste: false });
 assert.strictEqual(f.opoint_ft_nesteBackfill({ '2026-11-16': { status: 'ferdig' }, '2026-11-17': { status: 'feilet' } }).dag, '2026-11-17');
 assert.ok(f.opoint_ft_nesteBackfill({ '2026-11-17': { status: 'ferdig' } }).dag === '2026-11-16'); // 16 først
-assert.ok(f.opoint_ft_nesteBackfill({ '2026-11-16': { status: 'ferdig' }, '2026-11-17': { status: 'ferdig' }, '2026-11-18': { status: 'ferdig' }, '2026-11-19': { status: 'ferdig' } }).nekt.includes('Alle'));
+assert.ok(f.opoint_ft_nesteBackfill({ '2026-11-16': { status: 'ferdig' }, '2026-11-17': { status: 'ferdig' }, '2026-11-18': { status: 'ferdig' }, '2026-11-19': { status: 'ferdig' }, '2026-11-20': { status: 'ferdig' } }).nekt.includes('Alle'));
 // D–1 ikke ferdig → nekt (19 kan ikke kjøres når 18 mangler, selv om 16–17 er ferdige og 19 står som feilet)
 const n2 = f.opoint_ft_nesteBackfill({ '2026-11-16': { status: 'ferdig' }, '2026-11-17': { status: 'ferdig' }, '2026-11-19': { status: 'feilet' } });
 assert.strictEqual(n2.dag, '2026-11-18');
