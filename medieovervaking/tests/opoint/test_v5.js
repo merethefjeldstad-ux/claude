@@ -72,13 +72,13 @@ const sendte = [{ tid: Date.parse('2026-11-18T07:30:00+01:00'), tittel: 'NYK nam
   { tid: Date.parse('2026-11-17T07:30:00+01:00'), tittel: 'AYK to supply 165 MWh for Molslinjen', ingress: '165 MWh.', norm: 'motorship.com/ayk' },
   { tid: Date.parse('2026-11-19T07:30:00+01:00'), tittel: 'Brann i ferjekai i Kvinnherad', ingress: 'Brann.', norm: 'h.no/b' }];
 const tjE = lagTj(b => /sjekker om nyhetssaker allerede er sendt/.test(b.system) ? '{"treff": [{"ny": 1, "tidligere": "T1"}, {"ny": 2, "tidligere": "T2"}, {"ny": 3, "tidligere": "T3"}]}' :
-  /Kvinnherad/.test(b.messages[0].content) ? '{"nytt": "Politiet oppgir at brannen startet i et ladeskap."}' : '{"nytt": ""}');
+  /Kvinnherad/.test(b.messages[0].content) ? '{"samme_sak": true, "vesentlig": true, "begrunnelse": "Ny årsak.", "nytt": "Politiet oppgir at brannen startet i et ladeskap."}' : '{"samme_sak": true, "vesentlig": false, "begrunnelse": "Bare detaljer.", "nytt": ""}');
 const ek = f.opoint_kj_etterkontrollOppfolging(se, sendte, tjE);
 assert.strictEqual(ek.hendelse, 3); assert.strictEqual(ek.undertrykt, 2); assert.strictEqual(ek.oppdatering, 1);
-assert.ok(se[0].oppfolging && /Sendt før 18\.11 \(ingenting nytt\)/.test(se[0].oppfolgingGrunn));
+assert.ok(se[0].oppfolging && /Sendt før 18\.11 \(ikke vesentlig nytt/.test(se[0].oppfolgingGrunn));
 assert.ok(!se[2].oppfolging && se[2].oppdatering.nytt.startsWith('Politiet'));
 const ee = f.opoint_kj_byggEpost(se, null, vindu, fmt, false, {}, [], {});
-assert.strictEqual(ee.kort.length, 1); assert.ok(ee.html.includes('Nytt: Politiet oppgir') && ee.html.includes('Oppdatering av sak sendt 19.11'));
+assert.strictEqual(ee.kort.length, 0); assert.ok(ee.html.includes('>Oppdateringer</div>') && ee.html.includes('Nytt: Politiet oppgir')); assert.strictEqual(ee.oppdateringer.length, 1);
 assert.ok(tjE.kallListe.some(b => /TIDLIGERE \(sendt 18\.11\): NYK names/.test(b.messages[0].content)));
 console.log('DEL 2 OK');
 

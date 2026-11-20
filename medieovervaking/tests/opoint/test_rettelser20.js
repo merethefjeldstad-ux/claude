@@ -41,13 +41,19 @@ assert.strictEqual(lest.length, 2); assert.ok(lest.some(x => x.tittel === 'NYK a
 const nyk = doc({ id_article: 3, unix_timestamp: iVinduet, orig_url: 'https://fullavantenews.com/izanami', header: { text: 'World\'s first ammonia ship named Izanami by NYK' } });
 const ss2 = f.opoint_kj_lagSaker(f.opoint_kj_dedup([{ strom: 'B', navn: 'B', searchterm: 'b', dokumenter: [ayk, nyk] }], []), null);
 ss2.forEach(s => { s.oppfolging = false; });
-const tjOm = lagTj(() => '{"treff": [{"ny": 1, "tidligere": "T1", "nytt": ""}, {"ny": 2, "tidligere": "T2", "nytt": "Skipet har fått navnet Izanami"}]}');
+const tjOm = lagTj(b => /sammenligner en NY versjon/.test(b.system) ?
+  (/Izanami/.test(b.messages[0].content) ? '{"samme_sak": true, "vesentlig": true, "begrunnelse": "Nytt navn og levering.", "nytt": "Skipet er levert og har fått navnet Izanami"}' : '{"samme_sak": true, "vesentlig": false, "begrunnelse": "Samme kontrakt.", "nytt": ""}') :
+  /sjekker om nyhetssaker allerede er sendt/.test(b.system) ? '{"treff": []}' : '{"treff": [{"ny": 1, "tidligere": "T1"}, {"ny": 2, "tidligere": ["T2"]}]}');
 const om = f.opoint_kj_settOmtaltTidligere(ss2, lest, tjOm);
-assert.strictEqual(ss2[0].oppfolging, true); assert.strictEqual(ss2[1].oppfolging, false); assert.strictEqual(om.oppdatering, 1);
-assert.ok(tjOm.kallListe[0].system.includes('"nytt"'));
-ss2[1].kiResultat = { relevant: true, prioritet: 'høy', kategori: 'Energi og framdrift' };
+assert.strictEqual(om.oppdatering, 2); // begge er kandidater
+ss2.forEach(s => { s.kiResultat = { relevant: true, prioritet: 'høy', kategori: 'Energi og framdrift' }; });
+const ek = f.opoint_kj_etterkontrollOppfolging(ss2, lest, tjOm);
+assert.strictEqual(ss2[0].oppfolging, true); assert.ok(/ikke vesentlig nytt: Samme kontrakt/.test(ss2[0].oppfolgingGrunn));
+assert.strictEqual(ss2[1].oppfolging, false); assert.strictEqual(ek.oppdatering, 1);
+assert.ok(ek.liste.some(x => x.vesentlig === 'ja' && x.begrunnelse === 'Nytt navn og levering.'));
 const ep0 = f.opoint_kj_byggEpost(ss2, null, vindu, fmt, false, {}, []);
-assert.ok(ep0.html.includes('Nytt: Skipet har fått navnet Izanami') && ep0.html.includes('Oppdatering av sak sendt')); assert.ok(!ep0.html.includes('AYK Energy wins'));
+assert.ok(ep0.html.includes('>Oppdateringer</div>') && ep0.html.includes('Nytt: Skipet er levert')); assert.strictEqual(ep0.kort.length, 0); // ikke fullt kort
+assert.ok(!ep0.html.includes('AYK Energy wins'));
 console.log('1 Oppfølging OK');
 
 // ---- 3: ingress-rens og beste ingress ----
@@ -113,7 +119,7 @@ console.log('2 Egne vinkler OK');
 // ---- 5: prioritet ----
 const regler = f.opoint_kj_prioritetRegler(vindu);
 assert.ok(regler.includes('"høy" KUN når') && regler.includes('regionale eller kommunale prosjekter uten norsk kobling') && regler.includes('jubileer'));
-assert.ok(regler.includes('IMO Net-Zero Framework')); assert.strictEqual(f.OPOINT_KJ_KI_PROMPTVERSJON, 'opoint-6');
+assert.ok(regler.includes('IMO Net-Zero Framework')); assert.strictEqual(f.OPOINT_KJ_KI_PROMPTVERSJON, 'opoint-7');
 console.log('5 Prioritet OK');
 
 // ---- 6: sammendrag: avkuttet svar berges, større max_tokens ----

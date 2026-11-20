@@ -135,7 +135,7 @@ console.log('Alle v2-tester OK');
 // ---- Felles-prompt DEL 1c: ingen meta-språk ----
 (function () {
   ['opoint_kj_kiSystem'].forEach(n => assert.ok(f[n]({ oldest: 1, newest: 2 }).includes('«er nevnt i» er forbudt')));
-  [f.OPOINT_KJ_OPPS_SYSTEM, f.OPOINT_KJ_SAMMENDRAG_SYSTEM, f.OPOINT_IMO_SYSTEM, f.OPOINT_KJ_OMTALT_SYSTEM].forEach(p => assert.ok(p.includes('Ingen meta-språk')));
+  [f.OPOINT_KJ_OPPS_SYSTEM, f.OPOINT_KJ_SAMMENDRAG_SYSTEM, f.OPOINT_IMO_SYSTEM, f.OPOINT_KJ_NYTT_SYSTEM].forEach(p => assert.ok(p.includes('Ingen meta-språk')));
   assert.ok(f.OPOINT_KJ_META_RE.test('LowNoiser-prosjektet er nevnt i ingressen.')); assert.ok(f.OPOINT_KJ_META_RE.test('Artikkelen beskriver …'));
   assert.ok(!f.OPOINT_KJ_META_RE.test('LowNoiser samler 15 partnere fra industri og forskning.'));
   const s = f.opoint_kj_lagSaker(f.opoint_kj_dedup([{ strom: 'B', navn: 'B', searchterm: 'b', dokumenter: [doc({ id_article: 70, orig_url: 'https://m.com/1', header: { text: 'LowNoiser' }, summary: { text: 'LowNoiser brings together fifteen partners from industry and research to reduce underwater noise from ships.' } })] }], [], prio), null);

@@ -1040,13 +1040,14 @@ console.log('DEL 1 KI-feil OK');
   const om = f.opoint_kj_settOmtaltTidligere(saker, sendte, tj);
   assert.strictEqual(om.ki, 1); assert.ok(saker[1].omtaltTidligere.startsWith('KI:')); assert.strictEqual(saker[0].omtaltTidligere, undefined);
   assert.ok(tj.kallListe[0].messages[0].content.includes('TIDLIGERE:\nT1 NYK bestiller'));
-  // Rettelse 1: samme hendelse uten ny informasjon → Oppfølging (ikke i e-posten)
-  assert.strictEqual(saker[1].oppfolging, true); assert.ok(/^Sendt før .*\(KI/.test(saker[1].oppfolgingGrunn));
-  saker[1].oppfolging = false; saker[1].oppfolgingGrunn = '';
-  // … med ny informasjon → «Oppdatering» (vises)
-  const tjO = lagTj(() => '{"treff": [{"ny": 1, "tidligere": "T1", "nytt": "Skipet har fått navnet Izanami"}]}');
-  const omO = f.opoint_kj_settOmtaltTidligere(saker, sendte, tjO);
-  assert.strictEqual(omO.oppdatering, 1); assert.strictEqual(saker[1].oppfolging, false); assert.strictEqual(saker[1].oppdatering.nytt, 'Skipet har fått navnet Izanami');
+  // C 1: samme hendelse → kandidat for «Hva er nytt?» (avgjøres i etterkontrollen); to tidligere omtaler → Oppfølging
+  assert.ok(saker[1].oppdatering && !saker[1].oppfolging);
+  saker[1].oppdatering = null; saker[1].omtaltTidligere = '';
+  const sendte2 = sendte.concat([{ tid: 950, norm: 'y.no/1', url: 'https://y.no/1', tittel: 'NYK ammoniakk igjen', pri: 'middels' }]);
+  const tjO = lagTj(() => '{"treff": [{"ny": 1, "tidligere": ["T1", "T2"]}]}');
+  f.opoint_kj_settOmtaltTidligere(saker, sendte2, tjO);
+  assert.strictEqual(saker[1].oppfolging, true); assert.ok(/Allerede omtalt 2 gang/.test(saker[1].oppfolgingGrunn));
+  saker[1].oppfolging = false; saker[1].oppfolgingGrunn = ''; saker[1].omtaltTidligere = '';
   const urlSendte = [{ tid: 900, norm: 'b.no/1', url: 'https://b.no/1', tittel: 'Samme URL' }];
   const tj2 = lagTj(() => '{"treff": []}');
   const om2 = f.opoint_kj_settOmtaltTidligere(saker, urlSendte, tj2);
